@@ -1,0 +1,9 @@
+# SpaceMouse Python Dependencies
+# Install with: pip install -r requirements-spacemouse.txt
+
+# Main SpaceMouse library
+pyspacemouse==1.1.4
+
+# Required for ARM Mac (M1/M2/M3) - patched version of easyhid
+# Note: This must be installed separately after installing pyspacemouse
+# pip install git+https://github.com/bglopez/python-easyhid.git
