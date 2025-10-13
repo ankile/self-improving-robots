@@ -12,17 +12,71 @@ Controls:
     - SpaceMouse translation: Move robot end-effector in XYZ
     - SpaceMouse rotation: Rotate robot end-effector
     - Left button: Toggle gripper open/close
-    - Right button: Save trajectory and start new episode
-    - Press Ctrl+C in terminal: Quit and save all trajectories
+    - Press Ctrl+C in terminal: Quit
 """
 
 import argparse
 import gymnasium as gym
 import numpy as np
 import pyspacemouse
-from pathlib import Path
+from copy import deepcopy
 import mani_skill.envs  # Register ManiSkill environments
-from mani_skill.utils.wrappers.record import RecordEpisode
+from mani_skill.agents.robots.panda.panda import Panda
+from mani_skill.agents.registration import register_agent
+
+
+def apply_deadzone(value, threshold):
+    """Apply deadzone to SpaceMouse input to filter out noise."""
+    return value if abs(value) > threshold else 0.0
+
+
+def parse_axis_mapping(mapping_str):
+    """
+    Parse axis mapping string into remapping instructions.
+
+    Examples:
+        "xyz" -> no change
+        "yxz" -> swap x and y
+        "-xyz" -> negate x
+        "-x-yz" -> negate x and y
+
+    Returns:
+        A function that takes (x, y, z) and returns remapped (x', y', z')
+    """
+    mapping_str = mapping_str.lower().strip()
+
+    # Build axis lookup
+    axis_map = {}
+    axis_chars = [c for c in mapping_str if c in 'xyz']
+
+    if len(axis_chars) != 3 or len(set(axis_chars)) != 3:
+        raise ValueError(f"Invalid axis mapping: {mapping_str}. Must contain x, y, z exactly once.")
+
+    # Parse each axis and its sign
+    for i, char in enumerate(['x', 'y', 'z']):
+        # Find where this output axis comes from
+        idx = axis_chars.index(char)
+        # Check if there's a negative sign before it
+        sign_idx = mapping_str.index(char)
+        is_negative = sign_idx > 0 and mapping_str[sign_idx - 1] == '-'
+        axis_map[i] = (idx, -1.0 if is_negative else 1.0)
+
+    def remap(x, y, z):
+        vals = [x, y, z]
+        return tuple(vals[axis_map[i][0]] * axis_map[i][1] for i in range(3))
+
+    return remap
+
+
+def create_custom_panda(stiffness, damping, force_limit):
+    """Create a custom Panda robot with tuned control parameters."""
+    @register_agent()
+    class CustomPanda(Panda):
+        uid = "panda_custom_teleop"
+        arm_stiffness = stiffness
+        arm_damping = damping
+        arm_force_limit = force_limit
+    return CustomPanda
 
 
 def parse_args():
@@ -46,12 +100,6 @@ def parse_args():
         help="Robot to use (default: panda)"
     )
     parser.add_argument(
-        "--record-dir",
-        type=str,
-        default="demos",
-        help="Directory to save demonstration data"
-    )
-    parser.add_argument(
         "--max-episode-steps",
         type=int,
         default=10000,
@@ -60,14 +108,50 @@ def parse_args():
     parser.add_argument(
         "--speed",
         type=float,
-        default=0.05,
-        help="Speed multiplier for SpaceMouse control (default: 0.05)"
+        default=0.15,
+        help="Speed multiplier for SpaceMouse control (default: 0.15)"
     )
     parser.add_argument(
         "--rot-speed",
         type=float,
-        default=0.1,
-        help="Rotation speed multiplier for SpaceMouse control (default: 0.1)"
+        default=0.3,
+        help="Rotation speed multiplier for SpaceMouse control (default: 0.3)"
+    )
+    parser.add_argument(
+        "--stiffness",
+        type=float,
+        default=2000.0,
+        help="PD controller stiffness (default: 2000.0, higher = more responsive)"
+    )
+    parser.add_argument(
+        "--damping",
+        type=float,
+        default=200.0,
+        help="PD controller damping (default: 200.0, higher = less oscillation)"
+    )
+    parser.add_argument(
+        "--force-limit",
+        type=float,
+        default=200.0,
+        help="Maximum force for PD controller (default: 200.0)"
+    )
+    parser.add_argument(
+        "--deadzone",
+        type=float,
+        default=0.02,
+        help="SpaceMouse deadzone threshold (default: 0.02, values below this are ignored)"
+    )
+    parser.add_argument(
+        "--axis-mapping",
+        type=str,
+        default="-yxz",
+        help="SpaceMouse axis mapping to robot frame (default: -yxz). Use permutation like 'yxz' or '-x-yz' to remap axes"
+    )
+    parser.add_argument(
+        "--rot-axis-mapping",
+        type=str,
+        default="-x-yz",
+        help="SpaceMouse rotation axis mapping (default: -x-yz). Use permutation like 'yxz' or '-x-yz' to remap rotation axes"
     )
     return parser.parse_args()
 
@@ -83,7 +167,18 @@ def main():
     print(f"Robot: {args.robot_uid}")
     print(f"Translation speed: {args.speed}")
     print(f"Rotation speed: {args.rot_speed}")
+    print(f"PD Controller: stiffness={args.stiffness}, damping={args.damping}, force_limit={args.force_limit}")
+    print(f"Deadzone: {args.deadzone}")
+    print(f"Axis mapping: {args.axis_mapping} (translation), {args.rot_axis_mapping} (rotation)")
     print()
+
+    # Parse axis mappings
+    try:
+        axis_remap = parse_axis_mapping(args.axis_mapping)
+        rot_axis_remap = parse_axis_mapping(args.rot_axis_mapping)
+    except ValueError as e:
+        print(f"ERROR: {e}")
+        return
 
     # Initialize SpaceMouse
     print("Initializing SpaceMouse...")
@@ -95,10 +190,14 @@ def main():
     print("✓ SpaceMouse connected successfully!")
     print()
 
-    # Create output directory
-    output_dir = Path(args.record_dir) / args.env_id / "spacemouse"
-    output_dir.mkdir(parents=True, exist_ok=True)
-    print(f"Saving demonstrations to: {output_dir}")
+    # Create custom robot with tuned control parameters
+    print("Configuring robot controller...")
+    if args.robot_uid == "panda":
+        custom_robot_cls = create_custom_panda(args.stiffness, args.damping, args.force_limit)
+        robot_uid = "panda_custom_teleop"
+    else:
+        robot_uid = args.robot_uid
+    print(f"✓ Robot configured with PD gains!")
     print()
 
     # Create environment
@@ -109,11 +208,8 @@ def main():
         "render_mode": "rgb_array",
         "reward_mode": "dense",
         "enable_shadow": True,
+        "robot_uids": robot_uid,
     }
-
-    # Only add robot_uids if specified and not default
-    if args.robot_uid != "panda":
-        env_kwargs["robot_uids"] = args.robot_uid
 
     # Set max episode steps (0 means unlimited, otherwise use specified value)
     if args.max_episode_steps == 0:
@@ -122,17 +218,6 @@ def main():
         env_kwargs["max_episode_steps"] = args.max_episode_steps
 
     env = gym.make(args.env_id, **env_kwargs)
-
-    # Wrap with recording
-    env = RecordEpisode(
-        env,
-        output_dir=str(output_dir),
-        trajectory_name="trajectory",
-        save_video=False,
-        info_on_video=False,
-        source_type="teleoperation",
-        source_desc="SpaceMouse teleoperation"
-    )
 
     print("✓ Environment created!")
     print()
@@ -144,8 +229,7 @@ def main():
     print("SpaceMouse translation: Move end-effector in XYZ")
     print("SpaceMouse rotation: Rotate end-effector")
     print("Left button: Toggle gripper open/close")
-    print("Right button: Save trajectory and start new episode")
-    print("Ctrl+C: Quit and save all trajectories")
+    print("Ctrl+C: Quit")
     print("=" * 60)
     print()
 
@@ -181,24 +265,36 @@ def main():
             # Read SpaceMouse state
             state = pyspacemouse.read()
 
+            # Apply deadzone to filter out noise
+            x = apply_deadzone(state.x, args.deadzone)
+            y = apply_deadzone(state.y, args.deadzone)
+            z = apply_deadzone(state.z, args.deadzone)
+            roll = apply_deadzone(state.roll, args.deadzone)
+            pitch = apply_deadzone(state.pitch, args.deadzone)
+            yaw = apply_deadzone(state.yaw, args.deadzone)
+
+            # Remap axes according to user-specified mapping
+            x, y, z = axis_remap(x, y, z)
+            roll, pitch, yaw = rot_axis_remap(roll, pitch, yaw)
+
             # Build action from SpaceMouse input
             if args.control_mode == "pd_ee_delta_pose":
                 # 6-DOF control: translation (xyz) + rotation (rpy)
                 action = np.array([
-                    state.x * args.speed,      # x translation
-                    state.y * args.speed,      # y translation
-                    state.z * args.speed,      # z translation
-                    state.roll * args.rot_speed,   # roll rotation
-                    state.pitch * args.rot_speed,  # pitch rotation
-                    state.yaw * args.rot_speed,    # yaw rotation
+                    x * args.speed,      # x translation
+                    y * args.speed,      # y translation
+                    z * args.speed,      # z translation
+                    roll * args.rot_speed,   # roll rotation
+                    pitch * args.rot_speed,  # pitch rotation
+                    yaw * args.rot_speed,    # yaw rotation
                     1.0 if gripper_open else -1.0  # gripper (1=open, -1=close)
                 ], dtype=np.float32)
             elif args.control_mode == "pd_ee_delta_pos":
                 # 3-DOF control: translation only (xyz)
                 action = np.array([
-                    state.x * args.speed,      # x translation
-                    state.y * args.speed,      # y translation
-                    state.z * args.speed,      # z translation
+                    x * args.speed,      # x translation
+                    y * args.speed,      # y translation
+                    z * args.speed,      # z translation
                     1.0 if gripper_open else -1.0  # gripper
                 ], dtype=np.float32)
             else:
