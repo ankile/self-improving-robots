@@ -246,14 +246,11 @@ def main():
     print()
 
     # Teleoperation loop
-    num_trajs = 0
-    seed = 0
     gripper_open = True
     prev_button_left = False
-    prev_button_right = False
 
-    obs, info = env.reset(seed=seed)
-    print(f"Starting trajectory {num_trajs + 1} (seed={seed})")
+    obs, info = env.reset(seed=0)
+    print(f"Environment reset")
     print(f"Task info: {info}")
     print()
 
@@ -303,57 +300,21 @@ def main():
 
             # Handle buttons
             button_left = len(state.buttons) > 0 and state.buttons[0] == 1
-            button_right = len(state.buttons) > 1 and state.buttons[1] == 1
 
             # Left button: toggle gripper (on button press, not hold)
             if button_left and not prev_button_left:
                 gripper_open = not gripper_open
                 print(f"Gripper: {'OPEN' if gripper_open else 'CLOSED'}")
 
-            # Right button: save trajectory and start new episode
-            if button_right and not prev_button_right:
-                print(f"✓ Trajectory {num_trajs + 1} completed!")
-                num_trajs += 1
-                seed += 1
-                obs, info = env.reset(seed=seed)
-                gripper_open = True
-                print()
-                print(f"Starting trajectory {num_trajs + 1} (seed={seed})")
-                print(f"Task info: {info}")
-                print()
-
             prev_button_left = button_left
-            prev_button_right = button_right
 
             # Step environment
             obs, reward, terminated, truncated, info = env.step(action)
-
-            # Only auto-reset if episode succeeded (terminated=True)
-            # Don't auto-reset on truncation (time limit) - let user control resets
-            if terminated:
-                # Convert tensor to bool for checking
-                term_val = terminated.item() if hasattr(terminated, 'item') else terminated
-                success_val = info.get('success', False)
-                if hasattr(success_val, 'item'):
-                    success_val = success_val.item()
-
-                if term_val or success_val:
-                    print(f"✓ Task succeeded! Success={success_val}")
-                    print(f"✓ Trajectory {num_trajs + 1} completed!")
-                    num_trajs += 1
-                    seed += 1
-                    obs, info = env.reset(seed=seed)
-                    gripper_open = True
-                    print()
-                    print(f"Starting trajectory {num_trajs + 1} (seed={seed})")
-                    print(f"Task info: {info}")
-                    print()
 
     except KeyboardInterrupt:
         print()
         print("=" * 60)
         print("Interrupted by user!")
-        print(f"Total trajectories collected: {num_trajs}")
         print("=" * 60)
 
     finally:
@@ -363,8 +324,6 @@ def main():
         pyspacemouse.close()
         print("Closing environment...")
         env.close()
-        print()
-        print(f"✓ All data saved to: {output_dir}")
         print("Done!")
 
 
