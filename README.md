@@ -21,9 +21,13 @@ Research on continual robot learning: analyzing BC limitations, unified BC+RL fr
   - Button state monitoring
   - ~100Hz sampling rate
   - Human-in-the-loop data collection ready
+- ✅ ManiSkill3 integration
+  - Simple SpaceMouse teleoperation script
+  - Works with any ManiSkill environment
+  - Records demonstrations automatically
 
 ### Next Steps
-- [ ] Robot/simulation environment setup (bimanual manipulation)
+- [ ] Test teleoperation on bimanual tasks (TwoRobotStackCube-v1)
 - [ ] BC baseline implementation with action chunking
 - [ ] RL fine-tuning pipeline (SAC, PPO, or residual methods)
 - [ ] VLA integration (Pi0/OpenVLA fine-tuning experiments)
@@ -31,22 +35,57 @@ Research on continual robot learning: analyzing BC limitations, unified BC+RL fr
 
 ## Quick Start
 
-### SpaceMouse Setup
+### 1. SpaceMouse Setup
 
-1. **Automated setup** (recommended):
-   ```bash
-   ./setup_spacemouse.sh
-   source ~/.zshrc  # or restart terminal
-   ```
+**Automated setup** (recommended):
+```bash
+./setup_spacemouse.sh
+source ~/.zshrc  # or restart terminal
+```
 
-2. **Test SpaceMouse connection**:
-   ```bash
-   python test_spacemouse.py
-   ```
+**Test SpaceMouse connection**:
+```bash
+python test_spacemouse.py
+```
 
-### Manual Setup
+For manual setup, see [SETUP_SPACEMOUSE.md](SETUP_SPACEMOUSE.md).
 
-See [SETUP_SPACEMOUSE.md](SETUP_SPACEMOUSE.md) for detailed instructions.
+### 2. ManiSkill Environment Setup
+
+**Install ManiSkill3**:
+```bash
+pip install --upgrade mani_skill
+pip install torch  # if not already installed
+```
+
+**Test ManiSkill environment**:
+```bash
+python test_maniskill_env.py
+```
+
+### 3. SpaceMouse Teleoperation
+
+**Collect demonstrations with SpaceMouse**:
+```bash
+# Single-arm task
+python spacemouse_teleop.py -e PegInsertionSide-v1
+
+# Other available tasks
+python spacemouse_teleop.py -e PickCube-v1
+python spacemouse_teleop.py -e StackCube-v1
+python spacemouse_teleop.py -e PushT-v1
+
+# Adjust control speed
+python spacemouse_teleop.py -e PegInsertionSide-v1 --speed 0.1 --rot-speed 0.2
+```
+
+**Controls during teleoperation**:
+- Move SpaceMouse: Control robot end-effector (6-DOF)
+- Left button: Toggle gripper open/close
+- Right button: Save trajectory and start new episode
+- Ctrl+C: Quit and save all trajectories
+
+Demonstrations are saved to `demos/<env-id>/spacemouse/`.
 
 ## Requirements
 

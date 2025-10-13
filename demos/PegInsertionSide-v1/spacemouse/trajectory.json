@@ -1,0 +1,29 @@
+{
+  "env_info": {
+    "env_id": "PegInsertionSide-v1",
+    "env_kwargs": {
+      "obs_mode": "state",
+      "control_mode": "pd_ee_delta_pose",
+      "render_mode": "rgb_array",
+      "reward_mode": "dense",
+      "enable_shadow": true
+    },
+    "max_episode_steps": 10000
+  },
+  "commit_info": null,
+  "episodes": [
+    {
+      "episode_id": 0,
+      "episode_seed": 0,
+      "control_mode": "pd_ee_delta_pose",
+      "elapsed_steps": 6819,
+      "reset_kwargs": {
+        "options": null,
+        "seed": 0
+      },
+      "success": false
+    }
+  ],
+  "source_type": "teleoperation",
+  "source_desc": "SpaceMouse teleoperation"
+}

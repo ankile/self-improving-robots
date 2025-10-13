@@ -131,6 +131,16 @@ Focus on tasks that are:
 
 ## Technical Approach
 
+### Infrastructure & Tooling
+- **Training/Data Framework**: HuggingFace LeRobot (preferred over ManiSkill built-in code)
+  - Environment-agnostic dataset format
+  - State-of-the-art policy implementations (ACT, Diffusion Policy, VLA fine-tuning)
+  - Easy integration with HuggingFace Hub for sharing
+  - Better maintained and more widely adopted
+- **Simulation**: ManiSkill3 (for environments and physics)
+- **Data Collection**: SpaceMouse teleoperation (custom integration)
+- **Data Format**: Convert ManiSkill HDF5 → LeRobot format for training
+
 ### Action Representation
 - **Action chunking** is essential (enables temporal consistency and better exploration)
 - Support for both diffusion policies and direct regression
