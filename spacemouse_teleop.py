@@ -5,6 +5,10 @@ Simple SpaceMouse teleoperation for ManiSkill environments.
 This script allows you to control a robot in ManiSkill using a SpaceMouse device.
 The SpaceMouse provides 6-DOF control (3D position + 3D rotation) for the end-effector.
 
+The default control mode is pd_ee_target_delta_pose, which uses target-based control.
+This means the robot maintains its commanded position even when holding objects or under
+external forces, preventing drift and drooping that occurs with regular delta control.
+
 Usage:
     python spacemouse_teleop.py -e PegInsertionSide-v1
 
@@ -90,8 +94,8 @@ def parse_args():
     parser.add_argument(
         "--control-mode",
         type=str,
-        default="pd_ee_delta_pose",
-        help="Control mode for the robot. Options: pd_ee_delta_pose, pd_ee_delta_pos"
+        default="pd_ee_target_delta_pose",
+        help="Control mode for the robot. Options: pd_ee_target_delta_pose, pd_ee_delta_pose, pd_ee_target_delta_pos, pd_ee_delta_pos"
     )
     parser.add_argument(
         "--robot-uid",
@@ -234,10 +238,10 @@ def main():
     print()
 
     # Action space info
-    if args.control_mode == "pd_ee_delta_pose":
+    if "pose" in args.control_mode:
         action_dim = 7  # 3 pos + 3 rot + 1 gripper
         print(f"Action space: 7D (3 translation + 3 rotation + 1 gripper)")
-    elif args.control_mode == "pd_ee_delta_pos":
+    elif "pos" in args.control_mode:
         action_dim = 4  # 3 pos + 1 gripper
         print(f"Action space: 4D (3 translation + 1 gripper)")
     else:
@@ -275,7 +279,7 @@ def main():
             roll, pitch, yaw = rot_axis_remap(roll, pitch, yaw)
 
             # Build action from SpaceMouse input
-            if args.control_mode == "pd_ee_delta_pose":
+            if "pose" in args.control_mode:
                 # 6-DOF control: translation (xyz) + rotation (rpy)
                 action = np.array([
                     x * args.speed,      # x translation
@@ -286,7 +290,7 @@ def main():
                     yaw * args.rot_speed,    # yaw rotation
                     1.0 if gripper_open else -1.0  # gripper (1=open, -1=close)
                 ], dtype=np.float32)
-            elif args.control_mode == "pd_ee_delta_pos":
+            elif "pos" in args.control_mode:
                 # 3-DOF control: translation only (xyz)
                 action = np.array([
                     x * args.speed,      # x translation
