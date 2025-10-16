@@ -76,7 +76,7 @@ mjpython -m sir.teleoperation.robosuite_teleop --env TwoArmLift --robot Panda --
 Enable camera observations to collect visual data alongside state information:
 
 ```bash
-# Basic: agentview + wrist camera
+# Basic: agentview + wrist camera (WITH onscreen viewer!)
 mjpython -m sir.teleoperation.robosuite_teleop --env Lift --robot Panda \
   --save-images \
   --cameras "agentview,robot0_eye_in_hand"
@@ -90,7 +90,9 @@ mjpython -m sir.teleoperation.robosuite_teleop --env Lift --robot Panda \
   --output-dir ./my_images
 ```
 
-**Note**: Camera observations require offscreen rendering, which is automatically enabled when `--save-images` is used.
+**macOS CGL Fix**: As of our implementation, you CAN use both onscreen viewer and camera observations simultaneously on macOS! We fixed a bug in Robosuite where CGL (Core OpenGL) backend wasn't being used. CGL contexts are not tied to the main thread, allowing both viewer and offscreen rendering to work together.
+
+**Note**: Camera observations require offscreen rendering, which is automatically enabled when `--save-images` is used. On macOS, the script automatically sets `MUJOCO_GL=cgl` to use the thread-safe CGL backend.
 
 ### Adjust Sensitivity
 
@@ -137,6 +139,28 @@ mjpython -m sir.teleoperation.robosuite_teleop --env Lift --robot Panda
 ```
 
 The `mjpython` executable is installed automatically when you install MuJoCo via pip.
+
+### macOS CGL Backend Fix
+
+**Important Discovery**: We fixed a critical bug in Robosuite that prevented simultaneous onscreen viewer + camera observations on macOS.
+
+**The Problem**:
+- Robosuite recognized `MUJOCO_GL=cgl` as valid on macOS but had no code to use it
+- Always fell back to GLFW backend, which requires main thread for offscreen rendering
+- This made it impossible to use viewer + camera obs together
+
+**The Fix**:
+1. Created `robosuite/renderers/context/cgl_context.py` - wraps `mujoco.cgl.GLContext`
+2. Updated `robosuite/utils/binding_utils.py` - added CGL context case for macOS
+3. Our teleop script automatically sets `MUJOCO_GL=cgl` on macOS
+
+**Why This Works**:
+- MuJoCo 2.3.4+ (2023) added CGL backend for macOS
+- CGL (Core OpenGL) contexts are NOT tied to Cocoa windows
+- Can create offscreen contexts on background threads
+- No conflict with mjpython's main thread viewer
+
+**Result**: You can now have BOTH onscreen viewer AND camera observations on macOS!
 
 ### Device Access
 

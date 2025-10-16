@@ -164,7 +164,15 @@ Version may differ - check with `brew --prefix hidapi`
 - **Coordinate Frame Transform**: Robot expects `[pitch, roll, -yaw]` not `[roll, pitch, yaw]`
   - Reorder: `raw_drot[[1, 0, 2]]`
   - Flip yaw sign: `drot[2] = -drot[2]`
-- **Camera Observations**: Configurable camera names, resolution, automatic saving
+- **Camera Observations**: Configurable camera names, resolution, automatic image saving
+  - Common cameras: `agentview` (third-person), `robot0_eye_in_hand` (wrist-mounted)
+  - Requires `has_offscreen_renderer=True` and `use_camera_obs=True`
+  - **macOS BREAKTHROUGH**: CAN use onscreen viewer + camera obs simultaneously!
+  - Fixed Robosuite bug: added CGL backend support (was recognized but not used)
+  - CGL (Core OpenGL) contexts are NOT tied to main thread on macOS
+  - Script automatically sets `MUJOCO_GL=cgl` on macOS
+  - Works with mjpython viewer without conflicts
+  - Example images saved to `./robosuite_images/` by default
 - **Viewer Limitation**: MuJoCo viewer cannot be reopened → environment recreated for each episode
 - **macOS Critical**: MUST use `mjpython` not `python` - GUI operations require main thread
 
