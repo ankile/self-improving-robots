@@ -73,14 +73,24 @@ mjpython -m sir.teleoperation.robosuite_teleop --env TwoArmLift --robot Panda --
 
 ### Camera Observations and Image Saving
 
+Enable camera observations to collect visual data alongside state information:
+
 ```bash
-# Enable camera observations and save example images
+# Basic: agentview + wrist camera
+mjpython -m sir.teleoperation.robosuite_teleop --env Lift --robot Panda \
+  --save-images \
+  --cameras "agentview,robot0_eye_in_hand"
+
+# Custom resolution
 mjpython -m sir.teleoperation.robosuite_teleop --env Lift --robot Panda \
   --save-images \
   --cameras "agentview,robot0_eye_in_hand" \
   --camera-height 256 \
-  --camera-width 256
+  --camera-width 256 \
+  --output-dir ./my_images
 ```
+
+**Note**: Camera observations require offscreen rendering, which is automatically enabled when `--save-images` is used.
 
 ### Adjust Sensitivity
 
