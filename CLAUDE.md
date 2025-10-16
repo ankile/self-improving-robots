@@ -77,6 +77,8 @@ python -m sir.tests.test_env
 Expected output: Environment creation, reset confirmation, random actions for 10 steps with reward/termination info.
 
 ### Teleoperation
+
+**ManiSkill (no special requirements):**
 ```bash
 # Using installed console script
 sir-teleop -e PegInsertionSide-v1
@@ -88,6 +90,22 @@ python -m sir.teleoperation -e PegInsertionSide-v1
 sir-teleop -e PickCube-v1 --speed 0.2 --rot-speed 0.4
 sir-teleop -e StackCube-v1 --stiffness 3000 --damping 300
 ```
+
+**Robosuite (IMPORTANT - use mjpython on macOS):**
+```bash
+# macOS - MUST use mjpython (not python)
+mjpython -m sir.teleoperation.robosuite_teleop --env Lift --robot Panda
+
+# Linux - use python
+python -m sir.teleoperation.robosuite_teleop --env Lift --robot Panda
+
+# With camera observations
+mjpython -m sir.teleoperation.robosuite_teleop --env Lift --robot Panda \
+  --save-images \
+  --cameras "agentview,robot0_eye_in_hand"
+```
+
+**Why mjpython on macOS?** The MuJoCo viewer requires GUI operations on the main thread. Regular Python runs GUI code on background threads, causing NSWindow crashes. MuJoCo's `mjpython` wrapper ensures GUI operations run on the main thread.
 
 ### Manual Environment Setup
 If `DYLD_LIBRARY_PATH` is not set:
@@ -134,10 +152,27 @@ Version may differ - check with `brew --prefix hidapi`
 - **Deadzone**: 0.02 threshold filters sensor noise to prevent unwanted drift
 - **Control Speeds**: Translation 0.15 m/s, Rotation 0.3 rad/s (defaults, adjustable)
 
+### Robosuite Teleoperation Configuration
+- **SpaceMouse Driver**: Custom implementation using `hidapi` directly (matches Robosuite's original)
+  - Device IDs: Vendor `0x256F` (3Dconnexion), Product `0xC635` (SpaceMouse Compact)
+  - Different models may need different product IDs
+- **Control Scaling**: Matches Robosuite exactly
+  - Base scaling: `0.005` for all axes
+  - Position multiplier: `125` (0.625 total)
+  - Rotation multiplier: `50` (0.25 total)
+  - Final clipping to `[-1, 1]` range
+- **Coordinate Frame Transform**: Robot expects `[pitch, roll, -yaw]` not `[roll, pitch, yaw]`
+  - Reorder: `raw_drot[[1, 0, 2]]`
+  - Flip yaw sign: `drot[2] = -drot[2]`
+- **Camera Observations**: Configurable camera names, resolution, automatic saving
+- **Viewer Limitation**: MuJoCo viewer cannot be reopened → environment recreated for each episode
+- **macOS Critical**: MUST use `mjpython` not `python` - GUI operations require main thread
+
 ### Environment-Specific Notes
-- **ARM Mac Requirement**: Standard `easyhid` doesn't work on Apple Silicon; must use patched version from https://github.com/bglopez/python-easyhid.git
+- **ARM Mac SpaceMouse**: Standard `easyhid` doesn't work on Apple Silicon; must use patched version from https://github.com/bglopez/python-easyhid.git
 - **Library Loading**: macOS requires `DYLD_LIBRARY_PATH` to locate `hidapi` dynamic library at runtime
 - **3Dconnexion Driver Conflicts**: If official drivers are installed, `3DconnexionHelper` process may interfere. Kill with `killall 3DconnexionHelper` if connection fails.
+- **macOS MuJoCo Viewer**: NSWindow must be instantiated on main thread → use `mjpython` not `python`
 
 ### User Preferences
 - **Reproducibility**: Always create automation scripts and documentation for setup/configuration

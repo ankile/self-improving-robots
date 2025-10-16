@@ -5,11 +5,20 @@ This script allows collecting demonstrations from Robosuite environments
 for conversion to LeRobot dataset format.
 
 Usage:
+    # macOS (REQUIRED - use mjpython for viewer support)
+    mjpython -m sir.teleoperation.robosuite_teleop --env Lift --robot Panda
+
+    # Linux
     python -m sir.teleoperation.robosuite_teleop --env Lift --robot Panda
-    python -m sir.teleoperation.robosuite_teleop --env TwoArmLift --robot Baxter --config bimanual
+
+    # Multi-arm
+    mjpython -m sir.teleoperation.robosuite_teleop --env TwoArmLift --robot Baxter --config bimanual
 """
 
 import argparse
+import os
+import platform
+import sys
 import time
 
 import numpy as np
@@ -53,7 +62,9 @@ def teleop_episode(env, device, max_fr=20):
     }
 
     print("\nEpisode started. Use SpaceMouse to control the robot.")
-    print("Right button to reset, Ctrl+C to quit.\n")
+    print("Right button to reset, Ctrl+C to quit.")
+    print(f"Observation keys: {list(obs.keys())}")
+    print()
 
     step_count = 0
 
@@ -162,6 +173,33 @@ def create_env(args):
 
 
 def main():
+    # Check if running on macOS with regular python (not mjpython)
+    if platform.system() == "Darwin":
+        # mjpython sets _MJPYTHON attribute in mujoco.viewer module
+        try:
+            import mujoco.viewer
+            is_mjpython = hasattr(mujoco.viewer, '_MJPYTHON')
+        except (ImportError, AttributeError):
+            is_mjpython = False
+
+        if not is_mjpython:
+            print("=" * 70)
+            print("ERROR: On macOS, you must use 'mjpython' instead of 'python'")
+            print("=" * 70)
+            print("\nThe MuJoCo viewer requires GUI operations on the main thread,")
+            print("which is only supported by MuJoCo's mjpython wrapper on macOS.\n")
+            print("Please run:")
+            # Reconstruct the command properly
+            module_args = [arg for arg in sys.argv[1:]]
+            if module_args:
+                print(f"  mjpython -m sir.teleoperation.robosuite_teleop {' '.join(module_args)}")
+            else:
+                print("  mjpython -m sir.teleoperation.robosuite_teleop --env Lift --robot Panda")
+            print("\nIf mjpython is not found, ensure mujoco is installed:")
+            print("  pip install mujoco")
+            print("=" * 70)
+            sys.exit(1)
+
     parser = argparse.ArgumentParser(
         description="Teleoperate Robosuite environments with SpaceMouse"
     )

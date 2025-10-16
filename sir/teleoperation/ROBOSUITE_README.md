@@ -46,31 +46,46 @@ pip install -e ".[robosuite]"
 
 ### Basic Teleoperation
 
-```bash
-# Using python -m (recommended)
-python -m sir.teleoperation.robosuite_teleop --env Lift --robot Panda
+**IMPORTANT for macOS**: You must use `mjpython` instead of `python` to run the viewer on macOS:
 
-# Or using console script (requires pip install -e .)
-sir-teleop-robosuite --env Lift --robot Panda
+```bash
+# macOS (REQUIRED - use mjpython)
+mjpython -m sir.teleoperation.robosuite_teleop --env Lift --robot Panda
+
+# Linux (use python)
+python -m sir.teleoperation.robosuite_teleop --env Lift --robot Panda
 ```
+
+The MuJoCo viewer requires GUI operations on the main thread, which is only supported by `mjpython` on macOS. Using regular `python` will crash with an NSWindow error.
 
 ### Different Environments
 
 ```bash
 # Pick and place
-python -m sir.teleoperation.robosuite_teleop --env PickPlaceCan --robot Sawyer
+mjpython -m sir.teleoperation.robosuite_teleop --env PickPlaceCan --robot Sawyer
 
 # Two-arm bimanual
-python -m sir.teleoperation.robosuite_teleop --env TwoArmLift --robot Baxter --config bimanual
+mjpython -m sir.teleoperation.robosuite_teleop --env TwoArmLift --robot Baxter --config bimanual
 
 # Two-arm with two robots
-python -m sir.teleoperation.robosuite_teleop --env TwoArmLift --robot Panda --config parallel
+mjpython -m sir.teleoperation.robosuite_teleop --env TwoArmLift --robot Panda --config parallel
+```
+
+### Camera Observations and Image Saving
+
+```bash
+# Enable camera observations and save example images
+mjpython -m sir.teleoperation.robosuite_teleop --env Lift --robot Panda \
+  --save-images \
+  --cameras "agentview,robot0_eye_in_hand" \
+  --camera-height 256 \
+  --camera-width 256
 ```
 
 ### Adjust Sensitivity
 
 ```bash
-python -m sir.teleoperation.robosuite_teleop --env Lift --robot Panda \
+mjpython -m sir.teleoperation.robosuite_teleop --env Lift --robot Panda \
   --pos-sensitivity 2.0 \
   --rot-sensitivity 1.5
 ```
@@ -93,6 +108,25 @@ python -m sir.tests.test_robosuite_spacemouse
 - **Ctrl+C** - Quit
 
 ## Technical Notes
+
+### macOS Requirement: mjpython
+
+**CRITICAL**: On macOS, you MUST use `mjpython` instead of `python` to run Robosuite teleoperation with the viewer.
+
+Why? The MuJoCo viewer creates GUI windows using NSWindow, which on macOS must be instantiated on the main thread. Regular Python runs GUI code on background threads, causing crashes. MuJoCo's `mjpython` wrapper ensures GUI operations run on the main thread.
+
+Error you'll see if using regular `python`:
+```
+*** Terminating app due to uncaught exception 'NSInternalInconsistencyException',
+reason: 'NSWindow should only be instantiated on the main thread!'
+```
+
+**Solution**: Always use `mjpython` on macOS:
+```bash
+mjpython -m sir.teleoperation.robosuite_teleop --env Lift --robot Panda
+```
+
+The `mjpython` executable is installed automatically when you install MuJoCo via pip.
 
 ### Device Access
 
