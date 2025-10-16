@@ -18,7 +18,7 @@ This file contains context and notes for future Claude sessions working on this 
 
 **Research Thesis**: Robots should never stop learning. Current paradigm of "train once, deploy" is insufficient. Need systems that continuously improve through online interaction, learning from their own mistakes with minimal human intervention.
 
-## Current State (2025-10-13, Session 2)
+## Current State (2025-10-13, Session 4)
 
 ### What's Been Done
 
@@ -40,11 +40,22 @@ This file contains context and notes for future Claude sessions working on this 
    - Created test script: `test_maniskill_env.py`
    - Created comprehensive guide: `SPACEMOUSE_TELEOP.md`
 
-3. **Documentation - COMPLETE ✅** (Sessions 1-2)
-   - README.md: Research overview and quick start (updated with ManiSkill)
-   - CLAUDE.md: Detailed technical guidance
+3. **Teleoperation Improvements - COMPLETE ✅** (Sessions 3-4)
+   - Increased PD controller gains for responsiveness (stiffness 2000, damping 200, force_limit 200)
+   - Implemented axis remapping system for intuitive control
+   - Found working axis mappings: `-yxz` (translation), `-x-yz` (rotation)
+   - Added deadzone filtering (0.02 threshold) to prevent drift
+   - **Fixed drooping issue**: Switched to `pd_ee_target_delta_pose` control mode
+     - Target-based control prevents accumulation of drift errors
+     - Robot maintains commanded position even when holding objects
+   - Removed trajectory recording temporarily (will re-implement with LeRobot)
+   - Teleoperation fully tested and working on PegInsertionSide-v1
+
+4. **Documentation - COMPLETE ✅** (Sessions 1-4)
+   - README.md: Research overview and quick start (updated with teleoperation status)
+   - CLAUDE.md: Detailed technical guidance (updated with control mode details)
    - SETUP_SPACEMOUSE.md: Setup instructions
-   - SPACEMOUSE_TELEOP.md: Teleoperation guide
+   - SPACEMOUSE_TELEOP.md: Teleoperation guide (deprecated, info moved to README)
    - This file: Development context
 
 ### Technical Details
@@ -54,6 +65,7 @@ This file contains context and notes for future Claude sessions working on this 
 - Apple Silicon (arm64)
 - Python 3.11 (at `/opt/homebrew/bin/python3`)
 - Micromamba for environment management (env: `sir`)
+- **IMPORTANT**: Always use `python` command (NOT `python3`) to use the activated micromamba environment
 
 **SpaceMouse Setup:**
 - Library: `pyspacemouse==1.1.4`
@@ -73,29 +85,40 @@ This file contains context and notes for future Claude sessions working on this 
 - Single-arm tasks: `PegInsertionSide-v1`, `PickCube-v1`, `StackCube-v1`, etc.
 
 **Teleoperation Script (`spacemouse_teleop.py`):**
-- Control mode: `pd_ee_delta_pose` (6-DOF) or `pd_ee_delta_pos` (3-DOF)
+- Control mode: `pd_ee_target_delta_pose` (default, 6-DOF) - prevents drooping
+  - Alternative modes: `pd_ee_delta_pose`, `pd_ee_target_delta_pos`, `pd_ee_delta_pos`
 - SpaceMouse → Robot mapping:
-  - XYZ translation → End-effector position delta
-  - Roll/Pitch/Yaw rotation → End-effector orientation delta
+  - XYZ translation → End-effector position delta (axis mapping: `-yxz`)
+  - Roll/Pitch/Yaw rotation → End-effector orientation delta (axis mapping: `-x-yz`)
   - Left button → Toggle gripper
-  - Right button → Save trajectory & reset
-  - Ctrl+C → Quit and save all data
-- Output format: HDF5 (ManiSkill standard)
-- Output location: `demos/<env-id>/spacemouse/`
-- Adjustable speeds: `--speed` (default 0.05), `--rot-speed` (default 0.1)
+  - Ctrl+C → Quit
+- PD controller gains (tuned for teleoperation):
+  - Stiffness: 2000 (default 1000)
+  - Damping: 200 (default 100)
+  - Force limit: 200 (default 100)
+- Deadzone: 0.02 (filters sensor noise)
+- Adjustable speeds: `--speed` (default 0.15), `--rot-speed` (default 0.3)
+- **Recording removed**: Will be re-implemented with LeRobot integration
 
 ## What's Next
 
-### IMMEDIATE: Data Pipeline Setup (Session 3+)
+### IMMEDIATE: Data Pipeline Setup (Session 5+)
 
-**Status (Session 3)**:
+**Status (Session 4)**:
 - ✅ ManiSkill environment working (installed `pin` for pinocchio)
-- ✅ `spacemouse_teleop.py` fixed and ready to test
-- ⏳ User needs to test with physical SpaceMouse
+- ✅ `spacemouse_teleop.py` fully working and tested
+- ✅ Teleoperation tested successfully on PegInsertionSide-v1
+- ✅ Control issues resolved (responsiveness, frame alignment, drooping)
 
 **Next steps**:
-1. Test `spacemouse_teleop.py` with SpaceMouse (user will do this)
-2. Collect a few demo trajectories to validate recording works
+1. **Re-implement trajectory recording in teleoperation script**
+   - Add HDF5 recording back (ManiSkill RecordEpisode wrapper or custom)
+   - Right button: Save trajectory & reset
+   - Ctrl+C: Save all and quit
+   - Output location: `demos/<env-id>/spacemouse/`
+2. **Collect demo trajectories**
+   - Gather 5-10 demos on simple task (PegInsertionSide-v1)
+   - Validate recording format
 3. **Create ManiSkill → LeRobot data converter**
    - Parse ManiSkill HDF5 trajectory files
    - Convert to LeRobot dataset format
@@ -207,6 +230,17 @@ This file contains context and notes for future Claude sessions working on this 
 7. **Human-in-the-loop**: Design for corrections and shared autonomy from the start
 8. **Vision-based policies**: Standard RGB cameras (avoid force/tactile sensors initially)
 9. **Bimanual manipulation**: More interesting research problems than single-arm
+10. **Target delta control**: Use `pd_ee_target_delta_pose` (not regular delta) to prevent drooping
+    - Investigated ManiSkill controller architecture (panda.py, pd_ee_pose.py)
+    - Regular delta: actions relative to current actual pose → drift accumulates
+    - Target delta: actions relative to last commanded pose → no drift accumulation
+    - Critical for stable teleoperation when holding objects under load
+11. **PD controller gains**: Doubled from defaults (stiffness 2000, damping 200, force_limit 200)
+    - More responsive to SpaceMouse inputs
+    - Stronger position holding against gravity and external forces
+12. **Frame alignment**: Implemented axis remapping system (`-yxz` translation, `-x-yz` rotation)
+    - Makes teleoperation intuitive (forward=forward, left=left)
+    - Allows easy adjustment without code changes
 
 ## Key Insights from Literature Review (from presentation)
 
@@ -234,9 +268,10 @@ This file contains context and notes for future Claude sessions working on this 
 
 ## Known Issues / Limitations
 
-- SpaceMouse setup complete and working
-- No robot/sim environment yet
+- Trajectory recording removed from teleoperation (needs re-implementation)
+- No ManiSkill → LeRobot data converter yet
 - No BC/RL pipeline implemented yet
+- Teleoperation only tested on single-arm tasks (bimanual needs testing)
 
 ## Tips for Future Claude Sessions
 
@@ -245,6 +280,10 @@ This file contains context and notes for future Claude sessions working on this 
 3. **Focus**: Bimanual, long-horizon, demo-driven manipulation tasks
 4. **Methods**: Unifying BC + DAgger + RL with action chunking and VLAs
 5. **User preferences**: Clear reproducible setup, automation scripts, thorough documentation
+6. **Control mode importance**: Always use `pd_ee_target_delta_pose` for teleoperation (not `pd_ee_delta_pose`)
+   - Target-based control prevents drooping/drift when holding objects
+   - Regular delta control accumulates error and drifts over time
+   - This is critical for stable teleoperation with gripper holding objects
 
 ## Questions to Ask User (if needed)
 
@@ -305,5 +344,5 @@ See README.md for comprehensive list. Key papers:
 
 ---
 
-*Last updated: 2025-10-13 Session 2*
-*Status: SpaceMouse teleoperation script created, needs debugging/testing*
+*Last updated: 2025-10-13 Session 4*
+*Status: SpaceMouse teleoperation fully working and tested. Ready for data collection pipeline.*

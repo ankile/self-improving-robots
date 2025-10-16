@@ -40,13 +40,54 @@ This installs:
 - Patched `easyhid` for ARM Mac compatibility
 - Configures `DYLD_LIBRARY_PATH` in `.zshrc`
 
+## Package Installation
+
+This project is structured as a proper Python package that can be installed in editable mode:
+
+```bash
+# Install in editable mode (development)
+pip install -e .
+
+# Install with development dependencies
+pip install -e ".[dev]"
+```
+
+After installation, you can use the package commands from anywhere or run modules directly.
+
 ## Common Commands
 
 ### Testing SpaceMouse
 ```bash
-python test_spacemouse.py
+# Using installed console script
+sir-test-spacemouse
+
+# Or using python -m
+python -m sir.tests.test_spacemouse
 ```
 Expected output: Device detection, connection confirmation, real-time 6-DOF values (position: x/y/z, rotation: roll/pitch/yaw, button states). Press Ctrl+C to stop.
+
+### Testing ManiSkill Environment
+```bash
+# Using installed console script
+sir-test-env
+
+# Or using python -m
+python -m sir.tests.test_env
+```
+Expected output: Environment creation, reset confirmation, random actions for 10 steps with reward/termination info.
+
+### Teleoperation
+```bash
+# Using installed console script
+sir-teleop -e PegInsertionSide-v1
+
+# Or using python -m
+python -m sir.teleoperation -e PegInsertionSide-v1
+
+# Adjust control parameters if needed
+sir-teleop -e PickCube-v1 --speed 0.2 --rot-speed 0.4
+sir-teleop -e StackCube-v1 --stiffness 3000 --damping 300
+```
 
 ### Manual Environment Setup
 If `DYLD_LIBRARY_PATH` is not set:
@@ -75,6 +116,23 @@ Version may differ - check with `brew --prefix hidapi`
   - Collecting demonstration data for BC pre-training
   - Providing corrective interventions during RL rollouts (HiL-SERL, RaC-style)
   - Shared autonomy for safe exploration
+
+### ManiSkill3 Teleoperation Configuration
+- **Control Mode**: `pd_ee_target_delta_pose` (default, recommended for teleoperation)
+  - Uses target-based control: actions relative to last commanded pose, not actual pose
+  - Prevents drift/drooping when holding objects or under load
+  - Robot actively maintains commanded position even with zero input
+  - Alternative: `pd_ee_delta_pose` (may droop under load)
+- **PD Controller Gains** (tuned for responsive teleoperation):
+  - Stiffness: 2000 (default 1000) - higher = more responsive to commands
+  - Damping: 200 (default 100) - higher = less oscillation
+  - Force limit: 200 (default 100) - higher = stronger position holding
+- **Frame Mapping**: SpaceMouse → Robot coordinate frames
+  - Translation: `-yxz` (negate Y→X, X→Y, Z→Z)
+  - Rotation: `-x-yz` (negate X→X, negate Y→Y, Z→Z)
+  - Makes controls intuitive: forward=forward, left=left
+- **Deadzone**: 0.02 threshold filters sensor noise to prevent unwanted drift
+- **Control Speeds**: Translation 0.15 m/s, Rotation 0.3 rad/s (defaults, adjustable)
 
 ### Environment-Specific Notes
 - **ARM Mac Requirement**: Standard `easyhid` doesn't work on Apple Silicon; must use patched version from https://github.com/bglopez/python-easyhid.git

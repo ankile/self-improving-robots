@@ -10,77 +10,25 @@ This means the robot maintains its commanded position even when holding objects 
 external forces, preventing drift and drooping that occurs with regular delta control.
 
 Usage:
-    python spacemouse_teleop.py -e PegInsertionSide-v1
+    python -m sir.teleoperation.spacemouse_teleop -e PegInsertionSide-v1
 
 Controls:
     - SpaceMouse translation: Move robot end-effector in XYZ
     - SpaceMouse rotation: Rotate robot end-effector
     - Left button: Toggle gripper open/close
-    - Press Ctrl+C in terminal: Quit
+    - '1' key: Mark episode as success and reset
+    - '0' key: Mark episode as failure and reset
+    - Ctrl+C: Quit
 """
 
 import argparse
 import gymnasium as gym
 import numpy as np
 import pyspacemouse
-from copy import deepcopy
 import mani_skill.envs  # Register ManiSkill environments
-from mani_skill.agents.robots.panda.panda import Panda
-from mani_skill.agents.registration import register_agent
 
-
-def apply_deadzone(value, threshold):
-    """Apply deadzone to SpaceMouse input to filter out noise."""
-    return value if abs(value) > threshold else 0.0
-
-
-def parse_axis_mapping(mapping_str):
-    """
-    Parse axis mapping string into remapping instructions.
-
-    Examples:
-        "xyz" -> no change
-        "yxz" -> swap x and y
-        "-xyz" -> negate x
-        "-x-yz" -> negate x and y
-
-    Returns:
-        A function that takes (x, y, z) and returns remapped (x', y', z')
-    """
-    mapping_str = mapping_str.lower().strip()
-
-    # Build axis lookup
-    axis_map = {}
-    axis_chars = [c for c in mapping_str if c in 'xyz']
-
-    if len(axis_chars) != 3 or len(set(axis_chars)) != 3:
-        raise ValueError(f"Invalid axis mapping: {mapping_str}. Must contain x, y, z exactly once.")
-
-    # Parse each axis and its sign
-    for i, char in enumerate(['x', 'y', 'z']):
-        # Find where this output axis comes from
-        idx = axis_chars.index(char)
-        # Check if there's a negative sign before it
-        sign_idx = mapping_str.index(char)
-        is_negative = sign_idx > 0 and mapping_str[sign_idx - 1] == '-'
-        axis_map[i] = (idx, -1.0 if is_negative else 1.0)
-
-    def remap(x, y, z):
-        vals = [x, y, z]
-        return tuple(vals[axis_map[i][0]] * axis_map[i][1] for i in range(3))
-
-    return remap
-
-
-def create_custom_panda(stiffness, damping, force_limit):
-    """Create a custom Panda robot with tuned control parameters."""
-    @register_agent()
-    class CustomPanda(Panda):
-        uid = "panda_custom_teleop"
-        arm_stiffness = stiffness
-        arm_damping = damping
-        arm_force_limit = force_limit
-    return CustomPanda
+from .utils import apply_deadzone, parse_axis_mapping, KeyboardListener
+from .robot_config import create_custom_panda
 
 
 def parse_args():
@@ -209,7 +157,7 @@ def main():
     env_kwargs = {
         "obs_mode": "state",  # Use state observations
         "control_mode": args.control_mode,
-        "render_mode": "rgb_array",
+        "render_mode": "human",  # Use human mode so viewer is managed during reconfiguration
         "reward_mode": "dense",
         "enable_shadow": True,
         "robot_uids": robot_uid,
@@ -233,6 +181,8 @@ def main():
     print("SpaceMouse translation: Move end-effector in XYZ")
     print("SpaceMouse rotation: Rotate end-effector")
     print("Left button: Toggle gripper open/close")
+    print("'1' key: Mark episode as SUCCESS and reset")
+    print("'0' key: Mark episode as FAILURE and reset")
     print("Ctrl+C: Quit")
     print("=" * 60)
     print()
@@ -249,18 +199,23 @@ def main():
         print(f"Action space: {action_dim}D")
     print()
 
+    # Initialize keyboard listener
+    kbd_listener = KeyboardListener()
+    print("✓ Keyboard listener initialized (works regardless of window focus)")
+
     # Teleoperation loop
     gripper_open = True
     prev_button_left = False
+    episode_count = 0
 
     obs, info = env.reset(seed=0)
-    print(f"Environment reset")
+    print(f"Environment reset (Episode {episode_count})")
     print(f"Task info: {info}")
     print()
 
     try:
         while True:
-            # Open viewer window
+            # Render the SAPIEN viewer (must be called every iteration)
             env.render_human()
 
             # Read SpaceMouse state
@@ -312,6 +267,31 @@ def main():
 
             prev_button_left = button_left
 
+            # Check for keyboard input
+            key = kbd_listener.read_key()
+            if key == '1':
+                print()
+                print("=" * 60)
+                print("SUCCESS! Resetting environment...")
+                print("=" * 60)
+                print()
+                episode_count += 1
+                obs, info = env.reset()
+                print(f"Environment reset (Episode {episode_count})")
+                gripper_open = True
+                continue
+            elif key == '0':
+                print()
+                print("=" * 60)
+                print("FAILURE! Resetting environment...")
+                print("=" * 60)
+                print()
+                episode_count += 1
+                obs, info = env.reset()
+                print(f"Environment reset (Episode {episode_count})")
+                gripper_open = True
+                continue
+
             # Step environment
             obs, reward, terminated, truncated, info = env.step(action)
 
@@ -324,6 +304,9 @@ def main():
     finally:
         # Clean up
         print()
+        print("Cleaning up...")
+        print("Stopping keyboard listener...")
+        kbd_listener.close()
         print("Closing SpaceMouse...")
         pyspacemouse.close()
         print("Closing environment...")

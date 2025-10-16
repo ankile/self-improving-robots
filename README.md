@@ -22,70 +22,100 @@ Research on continual robot learning: analyzing BC limitations, unified BC+RL fr
   - ~100Hz sampling rate
   - Human-in-the-loop data collection ready
 - ✅ ManiSkill3 integration
-  - Simple SpaceMouse teleoperation script
+  - SpaceMouse teleoperation script with target-based control
   - Works with any ManiSkill environment
-  - Records demonstrations automatically
+  - Improved PD controller gains (stiffness=2000, damping=200, force_limit=200)
+  - Target delta control prevents drooping when holding objects
+  - Intuitive frame mapping: SpaceMouse axes aligned to robot frame
+  - Deadzone filtering to prevent drift
 
 ### Next Steps
+- [ ] Add trajectory recording functionality back to teleoperation script
+- [ ] Create ManiSkill → LeRobot data converter
 - [ ] Test teleoperation on bimanual tasks (TwoRobotStackCube-v1)
-- [ ] BC baseline implementation with action chunking
+- [ ] BC baseline implementation with action chunking (using LeRobot)
 - [ ] RL fine-tuning pipeline (SAC, PPO, or residual methods)
 - [ ] VLA integration (Pi0/OpenVLA fine-tuning experiments)
 - [ ] Analysis pipeline for BC saturation experiments
 
 ## Quick Start
 
-### 1. SpaceMouse Setup
+### Installation
 
-**Automated setup** (recommended):
+**1. Run SpaceMouse setup** (automated, recommended):
 ```bash
 ./setup_spacemouse.sh
 source ~/.zshrc  # or restart terminal
 ```
 
-**Test SpaceMouse connection**:
+**2. Install the package in editable mode**:
 ```bash
-python test_spacemouse.py
+pip install -e .
 ```
 
-For manual setup, see [SETUP_SPACEMOUSE.md](SETUP_SPACEMOUSE.md).
+This installs the `sir` package and provides console scripts (`sir-teleop`, `sir-test-spacemouse`, `sir-test-env`).
 
-### 2. ManiSkill Environment Setup
+For manual SpaceMouse setup, see [SETUP_SPACEMOUSE.md](SETUP_SPACEMOUSE.md).
 
-**Install ManiSkill3**:
+### Testing
+
+**Test SpaceMouse connection**:
 ```bash
-pip install --upgrade mani_skill
-pip install torch  # if not already installed
+# Using console script
+sir-test-spacemouse
+
+# Or using python -m
+python -m sir.tests.test_spacemouse
 ```
 
 **Test ManiSkill environment**:
 ```bash
-python test_maniskill_env.py
+# Using console script
+sir-test-env
+
+# Or using python -m
+python -m sir.tests.test_env
 ```
 
-### 3. SpaceMouse Teleoperation
+### SpaceMouse Teleoperation
 
-**Collect demonstrations with SpaceMouse**:
+**Basic usage**:
 ```bash
-# Single-arm task
-python spacemouse_teleop.py -e PegInsertionSide-v1
+# Using console script (recommended)
+sir-teleop -e PegInsertionSide-v1
 
-# Other available tasks
-python spacemouse_teleop.py -e PickCube-v1
-python spacemouse_teleop.py -e StackCube-v1
-python spacemouse_teleop.py -e PushT-v1
+# Or using python -m
+python -m sir.teleoperation -e PegInsertionSide-v1
+```
 
+**Other available tasks**:
+```bash
+sir-teleop -e PickCube-v1
+sir-teleop -e StackCube-v1
+sir-teleop -e PushT-v1
+```
+
+**Adjust control parameters**:
+```bash
 # Adjust control speed
-python spacemouse_teleop.py -e PegInsertionSide-v1 --speed 0.1 --rot-speed 0.2
+sir-teleop -e PegInsertionSide-v1 --speed 0.2 --rot-speed 0.4
+
+# Adjust PD controller gains for different responsiveness
+sir-teleop -e PegInsertionSide-v1 --stiffness 3000 --damping 300
 ```
 
 **Controls during teleoperation**:
 - Move SpaceMouse: Control robot end-effector (6-DOF)
 - Left button: Toggle gripper open/close
-- Right button: Save trajectory and start new episode
-- Ctrl+C: Quit and save all trajectories
+- Ctrl+C: Quit
 
-Demonstrations are saved to `demos/<env-id>/spacemouse/`.
+**Control Modes**:
+- `pd_ee_target_delta_pose` (default): Target-based control, prevents drooping when holding objects
+- `pd_ee_delta_pose`: Direct delta control (may droop under load)
+- `pd_ee_target_delta_pos`: Target-based position-only control (3-DOF)
+- `pd_ee_delta_pos`: Direct position-only delta control (3-DOF)
+
+**Note**: Trajectory recording functionality removed temporarily. Will be re-implemented with LeRobot integration.
 
 ## Requirements
 
@@ -126,12 +156,31 @@ Develop methods that handle:
 ├── README.md                      # This file
 ├── CLAUDE.md                      # Detailed guidance for Claude Code
 ├── SETUP_SPACEMOUSE.md           # SpaceMouse setup guide
-├── setup_spacemouse.sh           # Automated setup script
-├── requirements-spacemouse.txt   # Python dependencies
-├── test_spacemouse.py            # SpaceMouse test/demo script
+├── pyproject.toml                # Package configuration and dependencies
+├── setup.py                       # Setup script for pip install -e .
+├── setup_spacemouse.sh           # Automated SpaceMouse setup script
+├── requirements-spacemouse.txt   # SpaceMouse-specific dependencies
+├── sir/                          # Main package directory
+│   ├── __init__.py
+│   ├── teleoperation/            # Teleoperation modules
+│   │   ├── __init__.py
+│   │   ├── __main__.py           # Entry point for python -m sir.teleoperation
+│   │   ├── spacemouse_teleop.py  # Main teleoperation script
+│   │   ├── utils.py              # Utility functions (deadzone, axis mapping, keyboard)
+│   │   └── robot_config.py       # Robot configuration utilities
+│   └── tests/                    # Test scripts
+│       ├── __init__.py
+│       ├── test_spacemouse.py    # SpaceMouse test script
+│       ├── test_spacemouse/      # Entry point for python -m
+│       ├── test_maniskill_env.py # ManiSkill environment test
+│       └── test_env/             # Entry point for python -m
 └── .claude/
     └── notes.md                  # Development notes
 ```
+
+The package can be installed with `pip install -e .` and provides:
+- Console scripts: `sir-teleop`, `sir-test-spacemouse`, `sir-test-env`
+- Python module access: `python -m sir.teleoperation`, etc.
 
 ## Hardware
 
