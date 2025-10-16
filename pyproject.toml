@@ -27,6 +27,7 @@ dependencies = [
     "mani-skill>=3.0.0b0",
     "pyspacemouse==1.1.4",
     "pynput",
+    "hidapi",  # For Robosuite SpaceMouse support
 ]
 
 [project.optional-dependencies]
@@ -36,6 +37,9 @@ dev = [
     "ruff",
     "ipython",
 ]
+robosuite = [
+    "robosuite",  # Optional dependency for Robosuite teleoperation
+]
 
 [project.urls]
 Homepage = "https://github.com/ankile/self-improving-robots"
@@ -43,6 +47,7 @@ Repository = "https://github.com/ankile/self-improving-robots"
 
 [project.scripts]
 sir-teleop = "sir.teleoperation.spacemouse_teleop:main"
+sir-teleop-robosuite = "sir.teleoperation.robosuite_teleop:main"
 sir-test-spacemouse = "sir.tests.test_spacemouse:main"
 sir-test-env = "sir.tests.test_maniskill_env:main"
 
