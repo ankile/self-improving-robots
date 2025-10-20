@@ -62,7 +62,7 @@ Alternatively, run the automated setup script:
 
 Run the test script to verify your SpaceMouse is working:
 ```bash
-python test_spacemouse.py
+python -m sir.tests.test_spacemouse
 ```
 
 You should see:

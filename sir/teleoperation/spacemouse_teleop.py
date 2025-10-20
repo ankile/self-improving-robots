@@ -26,6 +26,11 @@ import gymnasium as gym
 import numpy as np
 import pyspacemouse
 import mani_skill.envs  # Register ManiSkill environments
+from pathlib import Path
+from datetime import datetime
+
+from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.common.datasets.push_dataset_to_hub.utils import concatenate_episodes
 
 from .utils import apply_deadzone, parse_axis_mapping, KeyboardListener
 from .robot_config import create_custom_panda
@@ -105,6 +110,23 @@ def parse_args():
         default="-x-yz",
         help="SpaceMouse rotation axis mapping (default: -x-yz). Use permutation like 'yxz' or '-x-yz' to remap rotation axes"
     )
+    parser.add_argument(
+        "--save-data",
+        action="store_true",
+        help="Save teleoperation data to LeRobotDataset"
+    )
+    parser.add_argument(
+        "--dataset-path",
+        type=str,
+        default="./data",
+        help="Path to save dataset (default: ./data)"
+    )
+    parser.add_argument(
+        "--dataset-name",
+        type=str,
+        default=None,
+        help="Name of the dataset. If not specified, will be generated as {env_id}_{timestamp}"
+    )
     return parser.parse_args()
 
 
@@ -122,6 +144,23 @@ def main():
     print(f"PD Controller: stiffness={args.stiffness}, damping={args.damping}, force_limit={args.force_limit}")
     print(f"Deadzone: {args.deadzone}")
     print(f"Axis mapping: {args.axis_mapping} (translation), {args.rot_axis_mapping} (rotation)")
+
+    # Data saving setup
+    dataset = None
+    if args.save_data:
+        dataset_name = args.dataset_name
+        if dataset_name is None:
+            # Generate dataset name from env_id and timestamp
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            env_name = args.env_id.replace("-", "_").lower()
+            dataset_name = f"{env_name}_{timestamp}"
+
+        dataset_path = Path(args.dataset_path) / dataset_name
+        print(f"Data saving: ENABLED")
+        print(f"Dataset path: {dataset_path}")
+        print(f"Dataset name: {dataset_name}")
+    else:
+        print(f"Data saving: DISABLED")
     print()
 
     # Parse axis mappings
@@ -207,11 +246,26 @@ def main():
     gripper_open = True
     prev_button_left = False
     episode_count = 0
+    saved_episode_count = 0
+
+    # Episode buffer for data collection
+    episode_buffer = None
+    if args.save_data:
+        episode_buffer = {
+            "observations": [],
+            "actions": [],
+            "rewards": [],
+            "dones": [],
+        }
 
     obs, info = env.reset(seed=0)
     print(f"Environment reset (Episode {episode_count})")
     print(f"Task info: {info}")
     print()
+
+    # Store initial observation if saving data
+    if args.save_data:
+        episode_buffer["observations"].append(obs.copy())
 
     try:
         while True:
@@ -269,31 +323,95 @@ def main():
 
             # Check for keyboard input
             key = kbd_listener.read_key()
+            should_reset = False
+            episode_success = None
+
             if key == '1':
                 print()
                 print("=" * 60)
                 print("SUCCESS! Resetting environment...")
                 print("=" * 60)
                 print()
-                episode_count += 1
-                obs, info = env.reset()
-                print(f"Environment reset (Episode {episode_count})")
-                gripper_open = True
-                continue
+                should_reset = True
+                episode_success = True
             elif key == '0':
                 print()
                 print("=" * 60)
                 print("FAILURE! Resetting environment...")
                 print("=" * 60)
                 print()
+                should_reset = True
+                episode_success = False
+
+            # Save episode data if requested
+            if should_reset and args.save_data and len(episode_buffer["actions"]) > 0:
+                # Save episode to dataset
+                if dataset is None:
+                    # Initialize dataset on first save
+                    dataset = LeRobotDataset.create(
+                        repo_id=dataset_name,
+                        fps=30,  # Approximate control frequency
+                        root=args.dataset_path,
+                        robot_type="panda",
+                        features={
+                            "observation.state": {
+                                "dtype": "float32",
+                                "shape": (obs.shape[0],),
+                                "names": ["state_dim_" + str(i) for i in range(obs.shape[0])]
+                            },
+                            "action": {
+                                "dtype": "float32",
+                                "shape": (action_dim,),
+                                "names": ["action_dim_" + str(i) for i in range(action_dim)]
+                            }
+                        }
+                    )
+                    print(f"✓ Dataset initialized at {dataset_path}")
+
+                # Convert episode buffer to arrays
+                episode_data = {
+                    "observation.state": np.array(episode_buffer["observations"], dtype=np.float32),
+                    "action": np.array(episode_buffer["actions"], dtype=np.float32),
+                    "episode_index": np.full(len(episode_buffer["actions"]), saved_episode_count, dtype=np.int64),
+                    "frame_index": np.arange(len(episode_buffer["actions"]), dtype=np.int64),
+                    "timestamp": np.arange(len(episode_buffer["actions"]), dtype=np.float32) / 30.0,  # Approximate
+                    "next.done": np.array(episode_buffer["dones"], dtype=bool),
+                    "next.reward": np.array(episode_buffer["rewards"], dtype=np.float32),
+                    "next.success": np.full(len(episode_buffer["actions"]), episode_success, dtype=bool),
+                }
+
+                # Add episode to dataset
+                dataset.add_episode(episode_data)
+                saved_episode_count += 1
+                print(f"✓ Episode saved to dataset (Total saved: {saved_episode_count})")
+
+                # Clear episode buffer
+                episode_buffer = {
+                    "observations": [],
+                    "actions": [],
+                    "rewards": [],
+                    "dones": [],
+                }
+
+            if should_reset:
                 episode_count += 1
                 obs, info = env.reset()
                 print(f"Environment reset (Episode {episode_count})")
                 gripper_open = True
+                # Store initial observation for new episode if saving data
+                if args.save_data:
+                    episode_buffer["observations"].append(obs.copy())
                 continue
 
             # Step environment
             obs, reward, terminated, truncated, info = env.step(action)
+
+            # Collect data for episode buffer
+            if args.save_data:
+                episode_buffer["observations"].append(obs.copy())
+                episode_buffer["actions"].append(action.copy())
+                episode_buffer["rewards"].append(reward)
+                episode_buffer["dones"].append(terminated or truncated)
 
     except KeyboardInterrupt:
         print()
@@ -305,6 +423,9 @@ def main():
         # Clean up
         print()
         print("Cleaning up...")
+        if args.save_data and dataset is not None:
+            print(f"Finalizing dataset... ({saved_episode_count} episodes saved)")
+            # Dataset is automatically saved when going out of scope
         print("Stopping keyboard listener...")
         kbd_listener.close()
         print("Closing SpaceMouse...")

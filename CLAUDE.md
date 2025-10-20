@@ -58,20 +58,12 @@ After installation, you can use the package commands from anywhere or run module
 
 ### Testing SpaceMouse
 ```bash
-# Using installed console script
-sir-test-spacemouse
-
-# Or using python -m
 python -m sir.tests.test_spacemouse
 ```
 Expected output: Device detection, connection confirmation, real-time 6-DOF values (position: x/y/z, rotation: roll/pitch/yaw, button states). Press Ctrl+C to stop.
 
 ### Testing ManiSkill Environment
 ```bash
-# Using installed console script
-sir-test-env
-
-# Or using python -m
 python -m sir.tests.test_env
 ```
 Expected output: Environment creation, reset confirmation, random actions for 10 steps with reward/termination info.
@@ -80,16 +72,29 @@ Expected output: Environment creation, reset confirmation, random actions for 10
 
 **ManiSkill (no special requirements):**
 ```bash
-# Using installed console script
-sir-teleop -e PegInsertionSide-v1
-
-# Or using python -m
+# Basic teleoperation
 python -m sir.teleoperation -e PegInsertionSide-v1
 
 # Adjust control parameters if needed
-sir-teleop -e PickCube-v1 --speed 0.2 --rot-speed 0.4
-sir-teleop -e StackCube-v1 --stiffness 3000 --damping 300
+python -m sir.teleoperation -e PickCube-v1 --speed 0.2 --rot-speed 0.4
+python -m sir.teleoperation -e StackCube-v1 --stiffness 3000 --damping 300
+
+# Save demonstration data to LeRobotDataset
+python -m sir.teleoperation -e PegInsertionSide-v1 --save-data --dataset-path ./data --dataset-name my_demos
+
+# Save data with auto-generated dataset name (env_id + timestamp)
+python -m sir.teleoperation -e PickCube-v1 --save-data
 ```
+
+**Data Collection with LeRobotDataset:**
+- Press `1` to mark the current episode as **SUCCESS** and save it to the dataset
+- Press `0` to mark the current episode as **FAILURE** and save it to the dataset
+- Dataset is saved locally to disk (NOT uploaded to HuggingFace Hub)
+- Use `--save-data` flag to enable data collection
+- Use `--dataset-path` to specify where to save (default: `./data`)
+- Use `--dataset-name` to specify dataset name (default: auto-generated from env_id and timestamp)
+- Episodes are only saved when you explicitly mark them with `1` or `0`
+- Dataset format is compatible with HuggingFace LeRobot for training
 
 **Robosuite (IMPORTANT - use mjpython on macOS):**
 ```bash
@@ -151,6 +156,15 @@ Version may differ - check with `brew --prefix hidapi`
   - Makes controls intuitive: forward=forward, left=left
 - **Deadzone**: 0.02 threshold filters sensor noise to prevent unwanted drift
 - **Control Speeds**: Translation 0.15 m/s, Rotation 0.3 rad/s (defaults, adjustable)
+- **Keyboard Controls**:
+  - `1` key: Mark current episode as **SUCCESS** and reset (saves to dataset if `--save-data` enabled)
+  - `0` key: Mark current episode as **FAILURE** and reset (saves to dataset if `--save-data` enabled)
+  - Ctrl+C: Quit teleoperation session
+- **Data Collection**:
+  - Integrated LeRobotDataset support for saving demonstrations
+  - Collects observations (state), actions, rewards, dones, and success labels
+  - Episodes are stored in LeRobot format compatible with training pipelines
+  - Data saved locally to disk (use separate tool to push to HuggingFace Hub if needed)
 
 ### Robosuite Teleoperation Configuration
 - **SpaceMouse Driver**: Custom implementation using `hidapi` directly (matches Robosuite's original)

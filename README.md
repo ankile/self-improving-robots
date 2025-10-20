@@ -28,10 +28,14 @@ Research on continual robot learning: analyzing BC limitations, unified BC+RL fr
   - Target delta control prevents drooping when holding objects
   - Intuitive frame mapping: SpaceMouse axes aligned to robot frame
   - Deadzone filtering to prevent drift
+- ✅ LeRobotDataset integration
+  - Save demonstrations directly to LeRobot format during teleoperation
+  - Mark episodes as success/failure with keyboard shortcuts
+  - Compatible with HuggingFace LeRobot training pipelines
+  - Collects observations, actions, rewards, and success labels
 
 ### Next Steps
-- [ ] Add trajectory recording functionality back to teleoperation script
-- [ ] Create ManiSkill → LeRobot data converter
+- [x] Add trajectory recording functionality with LeRobotDataset integration
 - [ ] Test teleoperation on bimanual tasks (TwoRobotStackCube-v1)
 - [ ] BC baseline implementation with action chunking (using LeRobot)
 - [ ] RL fine-tuning pipeline (SAC, PPO, or residual methods)
@@ -53,7 +57,7 @@ source ~/.zshrc  # or restart terminal
 pip install -e .
 ```
 
-This installs the `sir` package and provides console scripts (`sir-teleop`, `sir-test-spacemouse`, `sir-test-env`).
+This installs the `sir` package that can be used via `python -m` commands.
 
 For manual SpaceMouse setup, see [SETUP_SPACEMOUSE.md](SETUP_SPACEMOUSE.md).
 
@@ -61,19 +65,11 @@ For manual SpaceMouse setup, see [SETUP_SPACEMOUSE.md](SETUP_SPACEMOUSE.md).
 
 **Test SpaceMouse connection**:
 ```bash
-# Using console script
-sir-test-spacemouse
-
-# Or using python -m
 python -m sir.tests.test_spacemouse
 ```
 
 **Test ManiSkill environment**:
 ```bash
-# Using console script
-sir-test-env
-
-# Or using python -m
 python -m sir.tests.test_env
 ```
 
@@ -81,32 +77,33 @@ python -m sir.tests.test_env
 
 **Basic usage**:
 ```bash
-# Using console script (recommended)
-sir-teleop -e PegInsertionSide-v1
-
-# Or using python -m
 python -m sir.teleoperation -e PegInsertionSide-v1
 ```
 
 **Other available tasks**:
 ```bash
-sir-teleop -e PickCube-v1
-sir-teleop -e StackCube-v1
-sir-teleop -e PushT-v1
+python -m sir.teleoperation -e PickCube-v1
+python -m sir.teleoperation -e StackCube-v1
+python -m sir.teleoperation -e PushT-v1
 ```
 
 **Adjust control parameters**:
 ```bash
 # Adjust control speed
-sir-teleop -e PegInsertionSide-v1 --speed 0.2 --rot-speed 0.4
+python -m sir.teleoperation -e PegInsertionSide-v1 --speed 0.2 --rot-speed 0.4
 
 # Adjust PD controller gains for different responsiveness
-sir-teleop -e PegInsertionSide-v1 --stiffness 3000 --damping 300
+python -m sir.teleoperation -e PegInsertionSide-v1 --stiffness 3000 --damping 300
+
+# Save demonstration data to LeRobotDataset
+python -m sir.teleoperation -e PegInsertionSide-v1 --save-data --dataset-path ./data --dataset-name my_demos
 ```
 
 **Controls during teleoperation**:
 - Move SpaceMouse: Control robot end-effector (6-DOF)
 - Left button: Toggle gripper open/close
+- `1` key: Mark episode as SUCCESS and reset (saves to dataset if `--save-data` enabled)
+- `0` key: Mark episode as FAILURE and reset (saves to dataset if `--save-data` enabled)
 - Ctrl+C: Quit
 
 **Control Modes**:
@@ -115,7 +112,7 @@ sir-teleop -e PegInsertionSide-v1 --stiffness 3000 --damping 300
 - `pd_ee_target_delta_pos`: Target-based position-only control (3-DOF)
 - `pd_ee_delta_pos`: Direct position-only delta control (3-DOF)
 
-**Note**: Trajectory recording functionality removed temporarily. Will be re-implemented with LeRobot integration.
+**Data Collection**: Episodes can be saved to LeRobotDataset format by enabling `--save-data`. Press `1` to mark success or `0` to mark failure, and the episode will be saved locally for training.
 
 ## Requirements
 
@@ -178,9 +175,10 @@ Develop methods that handle:
     └── notes.md                  # Development notes
 ```
 
-The package can be installed with `pip install -e .` and provides:
-- Console scripts: `sir-teleop`, `sir-test-spacemouse`, `sir-test-env`
-- Python module access: `python -m sir.teleoperation`, etc.
+The package can be installed with `pip install -e .` and accessed via `python -m` commands:
+- `python -m sir.teleoperation` - SpaceMouse teleoperation
+- `python -m sir.tests.test_spacemouse` - Test SpaceMouse connection
+- `python -m sir.tests.test_env` - Test ManiSkill environment
 
 ## Hardware
 

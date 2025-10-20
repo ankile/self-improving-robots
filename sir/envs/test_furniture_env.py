@@ -9,13 +9,20 @@ from robot_descriptions import panda_mj_description
 # Paths
 scene_xml_path = Path(__file__).parent / "furniture_assembly.xml"
 franka_xml_path = panda_mj_description.MJCF_PATH
+franka_mesh_dir = Path(franka_xml_path).parent / "assets"
 
 print(f"Loading Franka model from: {franka_xml_path}")
+print(f"Franka mesh directory: {franka_mesh_dir}")
 print(f"Loading scene from: {scene_xml_path}")
 
 # Load both XML files
 scene_tree = ET.parse(scene_xml_path)
 scene_root = scene_tree.getroot()
+
+# Update compiler meshdir to point to Franka meshes from Menagerie
+compiler = scene_root.find('compiler')
+if compiler is not None:
+    compiler.set('meshdir', str(franka_mesh_dir))
 
 franka_tree = ET.parse(franka_xml_path)
 franka_root = franka_tree.getroot()

@@ -4,10 +4,10 @@ This guide explains how to use the SpaceMouse to collect demonstrations in ManiS
 
 ## Overview
 
-The `spacemouse_teleop.py` script provides a simple interface for teleoperation:
+The teleoperation script provides a simple interface for teleoperation:
 - **6-DOF control**: SpaceMouse provides intuitive 3D position + 3D rotation control
-- **Automatic recording**: Demonstrations are saved in ManiSkill's HDF5 format
-- **Button controls**: Toggle gripper and save trajectories with SpaceMouse buttons
+- **LeRobotDataset integration**: Save demonstrations directly in LeRobot format
+- **Keyboard controls**: Mark episodes as success/failure with `1`/`0` keys
 - **Any ManiSkill task**: Works with all single-arm ManiSkill environments
 
 ## Quick Start
@@ -15,22 +15,23 @@ The `spacemouse_teleop.py` script provides a simple interface for teleoperation:
 1. **Test your setup**:
    ```bash
    # Test SpaceMouse connection
-   python test_spacemouse.py
+   python -m sir.tests.test_spacemouse
 
    # Test ManiSkill environment
-   python test_maniskill_env.py
+   python -m sir.tests.test_env
    ```
 
 2. **Start teleoperation**:
    ```bash
-   python spacemouse_teleop.py -e PegInsertionSide-v1
+   python -m sir.teleoperation -e PegInsertionSide-v1
    ```
 
 3. **Control the robot**:
    - Move SpaceMouse: Robot end-effector follows your movements
    - Left button: Toggle gripper (press to open/close)
-   - Right button: Save current trajectory and reset for new one
-   - Ctrl+C in terminal: Quit and save all data
+   - `1` key: Mark episode as SUCCESS and save to dataset
+   - `0` key: Mark episode as FAILURE and save to dataset
+   - Ctrl+C in terminal: Quit
 
 ## Available Tasks
 
@@ -78,14 +79,14 @@ The script supports different control modes via `--control-mode`:
 Control how responsive the robot is to SpaceMouse movements:
 
 ```bash
-# Slower, more precise control (default)
-python spacemouse_teleop.py -e PegInsertionSide-v1 --speed 0.05 --rot-speed 0.1
+# Slower, more precise control
+python -m sir.teleoperation -e PegInsertionSide-v1 --speed 0.05 --rot-speed 0.1
 
-# Faster control for reaching/transport
-python spacemouse_teleop.py -e PegInsertionSide-v1 --speed 0.15 --rot-speed 0.3
+# Faster control for reaching/transport (default)
+python -m sir.teleoperation -e PegInsertionSide-v1 --speed 0.15 --rot-speed 0.3
 
 # Very slow for fine manipulation
-python spacemouse_teleop.py -e PegInsertionSide-v1 --speed 0.02 --rot-speed 0.05
+python -m sir.teleoperation -e PegInsertionSide-v1 --speed 0.02 --rot-speed 0.05
 ```
 
 **Tips**:
@@ -95,35 +96,42 @@ python spacemouse_teleop.py -e PegInsertionSide-v1 --speed 0.02 --rot-speed 0.05
 
 ## Output Data Format
 
-Demonstrations are saved in ManiSkill's standard format:
+Demonstrations are saved in LeRobot format when using `--save-data`:
 
 ```
-demos/
-└── PegInsertionSide-v1/
-    └── spacemouse/
-        ├── trajectory.h5          # All trajectories
-        └── trajectory.json        # Metadata
+data/
+└── peginsertion_v1_20250117_123456/
+    ├── meta/
+    │   └── info.json
+    ├── data/
+    │   ├── chunk-000/
+    │   │   └── observation.state.parquet
+    │   └── ...
+    └── videos/ (if camera observations enabled)
 ```
 
-**HDF5 structure**:
-- `traj_0/`, `traj_1/`, ... - Individual trajectories
-  - `actions`: Robot actions taken
-  - `obs`: Observations (if obs_mode != "none")
-  - `env_states`: Full simulator states
-  - `success`: Whether task succeeded
+**LeRobot format includes**:
+- `observation.state`: Robot state observations
+- `action`: Actions taken by the operator
+- `next.reward`: Rewards received
+- `next.done`: Episode termination flags
+- `next.success`: Success labels (from keyboard marking)
+- `episode_index`, `frame_index`, `timestamp`: Episode metadata
 
 **Compatible with**:
-- ManiSkill BC baselines
-- ManiSkill Diffusion Policy baseline
-- Custom training scripts
+- HuggingFace LeRobot training pipelines
+- ACT, Diffusion Policy implementations
+- VLA fine-tuning workflows
+- Easy upload to HuggingFace Hub
 
 ## Tips for Good Demonstrations
 
-1. **Practice first**: Do a few test runs without saving (Ctrl+C to abort)
+1. **Practice first**: Do a few test runs without `--save-data` to get familiar
 2. **Smooth motions**: SpaceMouse allows smooth, natural movements
-3. **Break into segments**: Use right button to save and start new trajectory
+3. **Mark outcomes**: Press `1` for successful episodes, `0` for failures
 4. **Collect failures too**: Both successes and failures can be useful for research
 5. **Vary initial conditions**: ManiSkill randomizes objects on reset
+6. **Only save good attempts**: Episodes are only saved when you explicitly press `1` or `0`
 
 ## Troubleshooting
 
@@ -131,12 +139,12 @@ demos/
 - Check USB connection
 - Verify permissions: System Settings → Privacy & Security → Input Monitoring
 - Kill 3Dconnexion driver: `killall 3DconnexionHelper`
-- Test with: `python test_spacemouse.py`
+- Test with: `python -m sir.tests.test_spacemouse`
 
 ### Environment won't open
 - Check ManiSkill installation: `pip show mani-skill`
 - Check Vulkan setup (needed for rendering)
-- Test with: `python test_maniskill_env.py`
+- Test with: `python -m sir.tests.test_env`
 
 ### Robot moves too fast/slow
 - Adjust `--speed` and `--rot-speed` parameters
@@ -153,32 +161,37 @@ demos/
 
 ## Advanced Usage
 
+### Save data to LeRobotDataset
+```bash
+python -m sir.teleoperation -e PickCube-v1 --save-data --dataset-path ./data --dataset-name my_demos
+```
+
 ### Custom robot
 ```bash
-python spacemouse_teleop.py -e PickCube-v1 --robot-uid panda_wristcam
+python -m sir.teleoperation -e PickCube-v1 --robot-uid panda_wristcam
 ```
 
 ### Custom episode length
 ```bash
-python spacemouse_teleop.py -e PickCube-v1 --max-episode-steps 200
+python -m sir.teleoperation -e PickCube-v1 --max-episode-steps 200
 ```
 
 ### Full command line options
 ```bash
-python spacemouse_teleop.py --help
+python -m sir.teleoperation --help
 ```
 
 ## Next Steps
 
 After collecting demonstrations:
-1. **Visualize**: Use ManiSkill's replay tools to verify quality
-2. **Train BC policy**: Use ManiSkill's BC baseline
-3. **Train Diffusion Policy**: Use ManiSkill's diffusion baseline
+1. **Visualize**: Review saved episodes to verify quality
+2. **Train BC policy**: Use LeRobot's ACT or Diffusion Policy implementations
+3. **Upload to Hub**: (Optional) Push dataset to HuggingFace Hub for sharing
 4. **Fine-tune with RL**: Use demonstrations to initialize RL policy
 
-See ManiSkill documentation for training baselines:
-- [Learning from Demonstrations](https://maniskill.readthedocs.io/en/latest/user_guide/learning_from_demos/index.html)
-- [Reinforcement Learning](https://maniskill.readthedocs.io/en/latest/user_guide/reinforcement_learning/index.html)
+See LeRobot documentation for training:
+- [LeRobot Documentation](https://github.com/huggingface/lerobot)
+- [Training Policies](https://github.com/huggingface/lerobot#training)
 
 ## Technical Details
 

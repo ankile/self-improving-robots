@@ -1,12 +1,48 @@
 <mujoco model="furniture_assembly">
-  <compiler angle="radian" meshdir="/Users/larsankile/code/furniture-bench/furniture_bench/assets/franka_description_ros/franka_description/meshes" />
+  <compiler angle="radian" inertiafromgeom="auto" meshdir="/Users/larsankile/.cache/robot_descriptions/mujoco_menagerie/franka_emika_panda/assets" />
 
-  <option timestep="0.002" gravity="0 0 -9.81">
-    <flag contact="enable" />
+  <option timestep="0.0005" gravity="0 0 -9.81" iterations="200" solver="Newton" tolerance="1e-12" viscosity="10.0">
+    <flag contact="enable" energy="enable" />
   </option>
 
+  <size njmax="500" nconmax="200" />
+
+  <default>
+    <geom condim="4" friction="5.0 1.0 1.0" solimp="0.999 0.999 0.0001 0.5 2" solref="0.002 1" margin="0.0" gap="0" />
+  <default class="panda">
+      <material specular="0.5" shininess="0.25" />
+      <joint armature="0.1" damping="1" axis="0 0 1" range="-2.8973 2.8973" />
+      <general dyntype="none" biastype="affine" ctrlrange="-2.8973 2.8973" forcerange="-87 87" />
+      <default class="finger">
+        <joint axis="0 1 0" type="slide" range="0 0.04" />
+      </default>
+
+      <default class="visual">
+        <geom type="mesh" contype="0" conaffinity="0" group="2" />
+      </default>
+      <default class="collision">
+        <geom type="mesh" group="3" />
+        <default class="fingertip_pad_collision_1">
+          <geom type="box" size="0.0085 0.004 0.0085" pos="0 0.0055 0.0445" />
+        </default>
+        <default class="fingertip_pad_collision_2">
+          <geom type="box" size="0.003 0.002 0.003" pos="0.0055 0.002 0.05" />
+        </default>
+        <default class="fingertip_pad_collision_3">
+          <geom type="box" size="0.003 0.002 0.003" pos="-0.0055 0.002 0.05" />
+        </default>
+        <default class="fingertip_pad_collision_4">
+          <geom type="box" size="0.003 0.002 0.0035" pos="0.0055 0.002 0.0395" />
+        </default>
+        <default class="fingertip_pad_collision_5">
+          <geom type="box" size="0.003 0.002 0.0035" pos="-0.0055 0.002 0.0395" />
+        </default>
+      </default>
+    </default>
+  </default>
+
   <visual>
-    <headlight ambient="0.5 0.5 0.5" />
+    <headlight ambient="0.3 0.3 0.3" diffuse="0.6 0.6 0.6" specular="0.1 0.1 0.1" />
   </visual>
 
   <asset>
@@ -15,10 +51,11 @@
     <material name="grid" texture="grid" texrepeat="10 10" reflectance="0.1" />
 
     
-    <material name="table_mat" rgba="0.8 0.8 0.8 1" />
+    <texture name="wood" type="2d" builtin="checker" width="512" height="512" rgb1="0.6 0.45 0.3" rgb2="0.55 0.4 0.25" />
+    <material name="table_mat" texture="wood" texrepeat="8 8" specular="0.2" shininess="0.3" />
 
     
-    <mesh name="square_table_top_mesh" file="/Users/larsankile/code/furniture-bench/furniture_bench/assets/furniture/mesh/square_table/square_table_top.obj" />
+    <mesh name="square_table_top_mesh" file="/Users/larsankile/code/furniture-bench/furniture_bench/assets/furniture/mesh/square_table/square_table_top_fixed.obj" />
     <mesh name="square_table_leg_mesh" file="/Users/larsankile/code/furniture-bench/furniture_bench/assets/furniture/mesh/square_table/square_table_leg.obj" />
   <material class="panda" name="white" rgba="1 1 1 1" />
     <material class="panda" name="off_white" rgba="0.901961 0.921569 0.929412 1" />
@@ -100,8 +137,9 @@
 
   <worldbody>
     
-    <light pos="0 0 3" dir="0 0 -1" directional="false" castshadow="true" />
-    <light pos="1 1 3" dir="-0.3 -0.3 -1" directional="false" />
+    <light pos="0 0 3" dir="0 0 -1" directional="false" castshadow="true" diffuse="0.5 0.5 0.5" specular="0.2 0.2 0.2" />
+    <light pos="1 1 3" dir="-0.3 -0.3 -1" directional="false" diffuse="0.4 0.4 0.4" specular="0.1 0.1 0.1" />
+    <light pos="-1 -1 2.5" dir="0.3 0.3 -1" directional="false" diffuse="0.3 0.3 0.3" specular="0.1 0.1 0.1" />
 
     
     <geom name="ground" type="plane" size="2 2 0.1" material="grid" />
@@ -117,17 +155,15 @@
 
     
     
-    <body name="square_table_top" pos="0.2 0 0.45">
+    <body name="square_table_top" pos="0.2 0 0.52" quat="0.7071 0.7071 0 0">
       <freejoint />
-      <geom type="mesh" mesh="square_table_top_mesh" rgba="0.8 0.6 0.4 1" mass="0.151" />
-      <inertial pos="0 0 0" mass="0.151" diaginertia="0.001 0.001 0.001" />
+      <geom type="mesh" mesh="square_table_top_mesh" rgba="0.8 0.6 0.4 1" density="498.68" />
     </body>
 
     
     <body name="square_table_leg1" pos="0.35 0.15 0.45">
       <freejoint />
-      <geom type="mesh" mesh="square_table_leg_mesh" rgba="0.8 0.6 0.4 1" mass="0.023" />
-      <inertial pos="0 0 0" mass="0.023" diaginertia="0.0001 0.0001 0.0001" />
+      <geom type="mesh" mesh="square_table_leg_mesh" rgba="0.8 0.6 0.4 1" density="369.98" />
     </body>
   <body name="franka_mount" pos="-0.4 0 0.42"><light name="top" pos="0 0 2" mode="trackcom" />
     <body name="link0" childclass="panda">

@@ -28,6 +28,7 @@ dependencies = [
     "pyspacemouse==1.1.4",
     "pynput",
     "hidapi",  # For Robosuite SpaceMouse support
+    "mink",  # For IK control
 ]
 
 [project.optional-dependencies]
