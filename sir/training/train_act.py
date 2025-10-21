@@ -35,6 +35,7 @@ import os
 import platform
 from pathlib import Path
 
+import imageio
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
@@ -107,10 +108,45 @@ def parse_args():
     parser.add_argument("--checkpoint-dir", type=str, default="./checkpoints",
                         help="Directory to save checkpoints")
 
+    # Video saving args
+    parser.add_argument("--save-video", action="store_true",
+                        help="Save videos of evaluation rollouts")
+    parser.add_argument("--video-dir", type=str, default="./videos",
+                        help="Directory to save evaluation videos")
+
     return parser.parse_args()
 
 
-def create_robosuite_env(env_name, robot_name, camera_names=None, camera_height=None, camera_width=None):
+class RobosuiteRenderWrapper:
+    """Wrapper to add render capability to robosuite environments."""
+
+    def __init__(self, env, render_size=(240, 320), render_camera="agentview"):
+        """
+        Args:
+            env: Robosuite environment
+            render_size: (height, width) for video rendering
+            render_camera: Camera name to use for rendering videos
+        """
+        self.env = env
+        self.render_size = render_size
+        self.render_camera = render_camera
+
+    def render(self):
+        """Return an RGB frame (H, W, 3, uint8) for video recording."""
+        frame = self.env.sim.render(
+            camera_name=self.render_camera,
+            height=self.render_size[0],
+            width=self.render_size[1],
+        )[::-1]  # Flip vertically (OpenGL convention)
+        return frame
+
+    def __getattr__(self, name):
+        """Delegate all other attributes to the wrapped environment."""
+        return getattr(self.env, name)
+
+
+def create_robosuite_env(env_name, robot_name, camera_names=None, camera_height=None, camera_width=None,
+                         render_size=(240, 320)):
     """Create a Robosuite environment for evaluation.
 
     Args:
@@ -119,6 +155,7 @@ def create_robosuite_env(env_name, robot_name, camera_names=None, camera_height=
         camera_names: List of camera names to use (None = no cameras, state-only)
         camera_height: Height of camera images (must match training data)
         camera_width: Width of camera images (must match training data)
+        render_size: (height, width) for video rendering (default: 240x320)
     """
     controller_config = load_composite_controller_config(
         controller=None,  # Use default
@@ -154,10 +191,15 @@ def create_robosuite_env(env_name, robot_name, camera_names=None, camera_height=
     env = suite.make(**env_config)
     env = VisualizationWrapper(env, indicator_configs=None)
 
+    # Wrap with render capability
+    render_camera = camera_names[0] if camera_names else "agentview"
+    env = RobosuiteRenderWrapper(env, render_size=render_size, render_camera=render_camera)
+
     return env
 
 
-def evaluate_policy(policy, preprocessor, action_stats, env, num_episodes=10, max_steps=400, device="cpu"):
+def evaluate_policy(policy, preprocessor, action_stats, env, num_episodes=10, max_steps=400, device="cpu",
+                    save_video=False, output_dir="./videos", step=None):
     """
     Evaluate the policy in the environment.
 
@@ -169,6 +211,9 @@ def evaluate_policy(policy, preprocessor, action_stats, env, num_episodes=10, ma
         num_episodes: Number of episodes to evaluate
         max_steps: Maximum steps per episode
         device: Device to run policy on
+        save_video: Whether to save rollout videos
+        output_dir: Directory to save videos
+        step: Current training step (for video naming)
 
     Returns:
         dict: Evaluation metrics (success_rate, avg_reward, avg_length)
@@ -178,6 +223,10 @@ def evaluate_policy(policy, preprocessor, action_stats, env, num_episodes=10, ma
     successes = []
     total_rewards = []
     episode_lengths = []
+
+    # Video buffers for saving rollouts
+    all_frames = [] if save_video else None
+    episode_frames = [] if save_video else None
 
     # Get camera names from policy config (if any)
     camera_names = []
@@ -210,7 +259,7 @@ def evaluate_policy(policy, preprocessor, action_stats, env, num_episodes=10, ma
         state_keys = [k for k in state_keys if k in obs]
         state = np.concatenate([obs[k].flatten() for k in state_keys])
 
-        for step in range(max_steps):
+        for env_step in range(max_steps):
             # Prepare observation batch for policy
             obs_dict = {}
 
@@ -255,6 +304,11 @@ def evaluate_policy(policy, preprocessor, action_stats, env, num_episodes=10, ma
             episode_reward += reward
             episode_length += 1
 
+            # Collect frames for video
+            if save_video and episode_frames is not None:
+                frame = env.render()
+                episode_frames.append(frame)
+
             # Update state
             state = np.concatenate([obs[k].flatten() for k in state_keys])
 
@@ -269,6 +323,11 @@ def evaluate_policy(policy, preprocessor, action_stats, env, num_episodes=10, ma
         total_rewards.append(episode_reward)
         episode_lengths.append(episode_length)
 
+        # Add episode frames to all_frames and reset episode buffer
+        if save_video and episode_frames is not None and all_frames is not None:
+            all_frames.extend(episode_frames)
+            episode_frames = []
+
     policy.train()
 
     metrics = {
@@ -276,6 +335,26 @@ def evaluate_policy(policy, preprocessor, action_stats, env, num_episodes=10, ma
         "avg_reward": np.mean(total_rewards),
         "avg_length": np.mean(episode_lengths),
     }
+
+    # Save video if requested
+    if save_video and all_frames is not None and len(all_frames) > 0:
+        # Create output directory
+        output_path = Path(output_dir)
+        output_path.mkdir(parents=True, exist_ok=True)
+
+        # Create video filename
+        step_str = f"step_{step}" if step is not None else "final"
+        video_name = f"eval_{step_str}.mp4"
+        video_path = output_path / video_name
+
+        # Write video using imageio
+        fps = 20  # Robosuite control frequency
+        writer = imageio.get_writer(video_path, fps=fps)
+        for frame in all_frames:
+            writer.append_data(frame)
+        writer.close()
+
+        print(f"✓ Saved evaluation video to: {video_path}")
 
     return metrics
 
@@ -485,6 +564,9 @@ def train(args):
                     num_episodes=args.eval_episodes,
                     max_steps=args.max_steps,
                     device=args.device,
+                    save_video=args.save_video,
+                    output_dir=args.video_dir,
+                    step=step,
                 )
 
                 print(f"Evaluation Results (step {step}):")
@@ -529,6 +611,9 @@ def train(args):
         num_episodes=args.eval_episodes * 2,  # More episodes for final eval
         max_steps=args.max_steps,
         device=args.device,
+        save_video=args.save_video,
+        output_dir=args.video_dir,
+        step=None,  # Final eval (no step number)
     )
 
     print(f"\nFinal Evaluation Results:")
