@@ -158,9 +158,18 @@ def teleop_episode(
     else:
         camera_keys = []
 
-    # Extract state observation (non-image keys)
-    state_keys = [k for k in obs.keys() if not k.endswith("_image")]
+    # Extract state observation
+    # Use minimal task-relevant state: end effector pose + gripper
+    # No joints (IK handled by controller), no object state, no velocities
+    state_keys = [
+        "robot0_eef_pos",        # 3 dims - end effector position
+        "robot0_eef_quat",       # 4 dims - end effector orientation (quaternion)
+        "robot0_gripper_qpos",   # 2 dims - gripper finger positions
+        # Total: 9 dims
+    ]
+    state_keys = [k for k in state_keys if k in obs]
     state_obs = np.concatenate([obs[k].flatten() for k in state_keys])
+
     episode_data["observations"].append(state_obs)
 
     # Store initial camera observations if saving data
@@ -241,7 +250,9 @@ def teleop_episode(
             env.render()
 
         # Store data
-        # Extract state observation (non-image keys)
+        # Extract state observation (using same logic as initial obs)
+        state_keys = ["robot0_eef_pos", "robot0_eef_quat", "robot0_gripper_qpos"]
+        state_keys = [k for k in state_keys if k in obs]
         state_obs = np.concatenate([obs[k].flatten() for k in state_keys])
         episode_data["observations"].append(state_obs)
         episode_data["actions"].append(action.copy())
@@ -296,7 +307,8 @@ def create_env(args):
         camera_names = [cam.strip() for cam in args.cameras.split(",")]
 
     # Enable camera observations if requested
-    use_camera_obs = args.save_images and camera_names is not None
+    # Enable cameras if either saving images OR saving data (with cameras specified)
+    use_camera_obs = (args.save_images or args.save_data) and camera_names is not None
     has_offscreen_renderer = use_camera_obs  # Must be True for camera obs
     has_renderer = not args.headless  # Only show viewer if not headless
 
