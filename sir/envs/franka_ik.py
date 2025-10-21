@@ -149,46 +149,39 @@ class FrankaIKController:
         tasks = [self.position_task, self.posture_task]
 
         # Iterative IK solving
-        try:
-            for iteration in range(max_iterations):
-                # Compute velocity from current configuration to target
-                velocity = mink.solve_ik(
-                    configuration=self.configuration,
-                    tasks=tasks,
-                    dt=dt,
-                    solver="quadprog",  # Use quadprog solver
-                    damping=1e-3,
-                    limits=self.limits,
-                )
+        for iteration in range(max_iterations):
+            # Compute velocity from current configuration to target
+            velocity = mink.solve_ik(
+                configuration=self.configuration,
+                tasks=tasks,
+                dt=dt,
+                solver="quadprog",  # Use quadprog solver
+                damping=1e-3,
+                limits=self.limits,
+            )
 
-                # Integrate velocity to get new configuration
-                self.configuration.integrate_inplace(velocity, dt)
+            # Integrate velocity to get new configuration
+            self.configuration.integrate_inplace(velocity, dt)
 
-                # Update MuJoCo data with new configuration
-                self.data.qpos[:] = self.configuration.q
-                mujoco.mj_forward(self.model, self.data)
+            # Update MuJoCo data with new configuration
+            self.data.qpos[:] = self.configuration.q
+            mujoco.mj_forward(self.model, self.data)
 
-                # Check convergence
-                current_pos, _ = self.get_ee_pose()
-                error = np.linalg.norm(current_pos - target_pos)
+            # Check convergence
+            current_pos, _ = self.get_ee_pose()
+            error = np.linalg.norm(current_pos - target_pos)
 
-                if error < tolerance:
-                    # Converged!
-                    break
+            if error < tolerance:
+                # Converged!
+                break
 
-            # Extract joint positions for the arm
-            q_arm = np.array([
-                self.configuration.q[self.model.jnt_qposadr[jid]]
-                for jid in self.joint_ids
-            ])
+        # Extract joint positions for the arm
+        q_arm = np.array([
+            self.configuration.q[self.model.jnt_qposadr[jid]]
+            for jid in self.joint_ids
+        ])
 
-            return q_arm
-
-        except Exception as e:
-            print(f"IK failed: {e}")
-            import traceback
-            traceback.print_exc()
-            return None
+        return q_arm
 
     def set_joint_positions(self, q_arm: np.ndarray):
         """Set arm joint positions in the simulation.

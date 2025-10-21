@@ -74,13 +74,9 @@ class KeyboardListener:
 
     def _on_press(self, key):
         """Callback for key press events."""
-        try:
-            # Handle alphanumeric keys
-            if hasattr(key, 'char') and key.char:
-                self.last_key = key.char
-        except AttributeError:
-            # Handle special keys (if needed in the future)
-            pass
+        # Handle alphanumeric keys
+        if hasattr(key, 'char') and key.char:
+            self.last_key = key.char
 
     def read_key(self):
         """Read the last pressed key and clear it."""

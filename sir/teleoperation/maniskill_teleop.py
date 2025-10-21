@@ -111,6 +111,18 @@ def parse_args():
         help="SpaceMouse rotation axis mapping (default: -x-yz). Use permutation like 'yxz' or '-x-yz' to remap rotation axes"
     )
     parser.add_argument(
+        "--no-record-gripper-motion",
+        action="store_false",
+        dest="record_gripper_motion",
+        help="Disable recording noop actions during gripper motion (enabled by default). When enabled, prevents gripper 'teleporting' in dataset.",
+    )
+    parser.add_argument(
+        "--gripper-vel-threshold",
+        type=float,
+        default=0.01,
+        help="Velocity threshold below which gripper is considered stopped (default: 0.01)",
+    )
+    parser.add_argument(
         "--save-data",
         action="store_true",
         help="Save teleoperation data to LeRobotDataset"
@@ -245,6 +257,8 @@ def main():
     # Teleoperation loop
     gripper_open = True
     prev_button_left = False
+    prev_gripper_open = True  # Track gripper state for change detection
+    gripper_is_moving = False  # Track if gripper is currently opening/closing
     episode_count = 0
     saved_episode_count = 0
 
@@ -318,6 +332,10 @@ def main():
             if button_left and not prev_button_left:
                 gripper_open = not gripper_open
                 print(f"Gripper: {'OPEN' if gripper_open else 'CLOSED'}")
+                # Detect gripper command change
+                if gripper_open != prev_gripper_open and args.record_gripper_motion:
+                    gripper_is_moving = True
+                    print(f"Gripper command changed, tracking motion until complete...")
 
             prev_button_left = button_left
 
@@ -410,6 +428,8 @@ def main():
                 obs, info = env.reset()
                 print(f"Environment reset (Episode {episode_count})")
                 gripper_open = True
+                prev_gripper_open = True
+                gripper_is_moving = False  # Reset motion tracking for new episode
                 # Store initial observation for new episode if saving data
                 if args.save_data:
                     episode_buffer["observations"].append(obs.copy())
@@ -417,6 +437,22 @@ def main():
 
             # Step environment
             obs, reward, terminated, truncated, info = env.step(action)
+
+            # Check gripper velocity to see if motion is complete
+            if gripper_is_moving and args.record_gripper_motion:
+                # For ManiSkill, access gripper qvel from the robot
+                # ManiSkill Panda has two gripper joints: panda_finger_joint1, panda_finger_joint2
+                robot = env.unwrapped.agent.robot
+                gripper_joints = [j for j in robot.get_active_joints() if 'finger' in j.name]
+                # Get actual joint velocities (not target velocities)
+                gripper_qvel = np.array([j.get_qvel() for j in gripper_joints])
+                max_qvel = np.max(np.abs(gripper_qvel))
+                if max_qvel < args.gripper_vel_threshold:
+                    gripper_is_moving = False
+                    print(f"Gripper motion complete (max qvel: {max_qvel:.4f})")
+
+            # Update previous gripper state
+            prev_gripper_open = gripper_open
 
             # Collect data for episode buffer
             if args.save_data:

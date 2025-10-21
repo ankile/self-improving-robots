@@ -84,11 +84,7 @@ def save_example_images(obs, output_dir, camera_keys):
         output_dir (Path): Directory to save images
         camera_keys (list): List of camera observation keys
     """
-    try:
-        from PIL import Image
-    except ImportError:
-        print("PIL not found. Install with: pip install pillow")
-        return
+    from PIL import Image
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -115,6 +111,8 @@ def teleop_episode(
     output_dir=None,
     has_renderer=True,
     camera_names=None,
+    record_gripper_motion=True,
+    gripper_vel_threshold=0.01,
 ):
     """
     Teleoperate a single episode.
@@ -129,6 +127,8 @@ def teleop_episode(
         output_dir (Path): Directory to save example images
         has_renderer (bool): Whether environment has onscreen renderer
         camera_names (list): List of camera names for observations
+        record_gripper_motion (bool): Whether to record noop actions while gripper is moving
+        gripper_vel_threshold (float): Velocity threshold to detect when gripper has stopped
 
     Returns:
         tuple: (episode_data, episode_success) where:
@@ -180,6 +180,8 @@ def teleop_episode(
 
     step_count = 0
     prev_gripper = device.control_gripper  # Track gripper state for change detection
+    gripper_is_moving = False  # Track if gripper is currently opening/closing
+    target_gripper_state = prev_gripper  # The gripper state we're waiting to reach
 
     while True:
         start = time.time()
@@ -224,6 +226,13 @@ def teleop_episode(
         dpos = np.clip(dpos * 125, -1, 1)
         drot = np.clip(drot * 50, -1, 1)
 
+        # Detect gripper command change
+        if gripper != prev_gripper:
+            if record_gripper_motion:
+                gripper_is_moving = True
+                target_gripper_state = gripper
+                print(f"Gripper command changed, tracking motion until complete...")
+
         # Gripper action: map 0/1 to -1/1 (open/close)
         gripper_action = 1.0 if gripper == 1 else -1.0
 
@@ -236,9 +245,19 @@ def teleop_episode(
         if has_renderer:
             env.render()
 
+        # Check gripper velocity to see if motion is complete
+        if gripper_is_moving and record_gripper_motion:
+            # Get gripper velocity from observation
+            gripper_qvel_key = "robot0_gripper_qvel"
+            gripper_qvel = obs[gripper_qvel_key]  # Will raise KeyError if not found
+            max_qvel = np.max(np.abs(gripper_qvel))
+            if max_qvel < gripper_vel_threshold:
+                gripper_is_moving = False
+                print(f"Gripper motion complete (max qvel: {max_qvel:.4f})")
+
         # Check if there's actual spacemouse input (only record when user is actively controlling)
-        # Check: raw control magnitude OR gripper button press
-        has_input = np.any(np.abs(control) > 0.01) or (gripper != prev_gripper)
+        # Check: raw control magnitude OR gripper button press OR gripper is currently moving
+        has_input = np.any(np.abs(control) > 0.01) or (gripper != prev_gripper) or gripper_is_moving
 
         # Only store data when there's actual input from the spacemouse
         if has_input:
@@ -443,6 +462,18 @@ def main():
         help="Enable visual aids (indicators) in the environment. Disabled by default for cleaner camera observations.",
     )
     parser.add_argument(
+        "--no-record-gripper-motion",
+        action="store_false",
+        dest="record_gripper_motion",
+        help="Disable recording noop actions during gripper motion (enabled by default). When enabled, prevents gripper 'teleporting' in dataset.",
+    )
+    parser.add_argument(
+        "--gripper-vel-threshold",
+        type=float,
+        default=0.01,
+        help="Velocity threshold below which gripper is considered stopped (default: 0.01)",
+    )
+    parser.add_argument(
         "--save-data",
         action="store_true",
         help="Save teleoperation data to LeRobotDataset",
@@ -474,12 +505,9 @@ def main():
     # Check if running on macOS with regular python (not mjpython)
     if platform.system() == "Darwin" and not args.headless:
         # mjpython sets _MJPYTHON attribute in mujoco.viewer module
-        try:
-            import mujoco.viewer
+        import mujoco.viewer
 
-            is_mjpython = hasattr(mujoco.viewer, "_MJPYTHON")
-        except (ImportError, AttributeError):
-            is_mjpython = False
+        is_mjpython = hasattr(mujoco.viewer, "_MJPYTHON")
 
         if not is_mjpython:
             print("=" * 70)
@@ -582,6 +610,8 @@ def main():
                 output_dir=output_dir,
                 has_renderer=not args.headless,
                 camera_names=camera_names,
+                record_gripper_motion=args.record_gripper_motion,
+                gripper_vel_threshold=args.gripper_vel_threshold,
             )
 
             # If None returned, user requested reset - continue to next episode

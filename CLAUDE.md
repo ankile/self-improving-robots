@@ -129,6 +129,17 @@ mjpython -m sir.teleoperation.robosuite_teleop --env Lift --robot Panda \
 - Visual aids appear in both the viewer and camera renders when enabled
 - For research validity, it's recommended to keep them disabled during data collection
 
+**Gripper Motion Recording (IMPORTANT for Data Quality):**
+- **Default: ENABLED** - Automatically records noop actions while the gripper is opening/closing
+- **Why this matters**: When you toggle the gripper, it takes several physics steps (~10-20) for the gripper to actually open/close. Without this feature, only the button press action is recorded, causing the gripper to appear to "teleport" in the dataset. The trained policy won't learn to wait for the gripper to finish moving.
+- **How it works**: After detecting a gripper command change, the system monitors gripper joint velocities. While the gripper is moving (velocity above threshold), it records actions where:
+  - End-effector deltas are zero (no arm movement from SpaceMouse)
+  - Gripper command maintains the target state
+  - Recording continues until gripper velocity drops below threshold (default: 0.01 rad/s)
+- **Disabling**: Use `--no-record-gripper-motion` flag to disable (not recommended for training data)
+- **Tuning**: Use `--gripper-vel-threshold` to adjust the velocity threshold for detecting when gripper motion is complete
+- **Note**: If gripper velocity cannot be accessed from the environment, the script will crash rather than silently collecting bad data
+
 **Why mjpython on macOS?** The MuJoCo viewer requires GUI operations on the main thread. Regular Python runs GUI code on background threads, causing NSWindow crashes. MuJoCo's `mjpython` wrapper ensures GUI operations run on the main thread.
 
 **Data Collection with LeRobotDataset (Robosuite):**

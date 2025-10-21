@@ -57,3 +57,4 @@ dmypy.json
 data/
 videos/
 checkpoints/
+wandb/
