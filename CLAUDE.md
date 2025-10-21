@@ -93,6 +93,7 @@ python -m sir.teleoperation -e PickCube-v1 --save-data
 - Use `--save-data` flag to enable data collection
 - Use `--dataset-path` to specify where to save (default: `./data`)
 - Use `--dataset-name` to specify dataset name (default: auto-generated from env_id and timestamp)
+- **If dataset name already exists, it will load and append new episodes to it** (useful for collecting more data)
 - Episodes are only saved when you explicitly mark them with `1` or `0`
 - Dataset format is compatible with HuggingFace LeRobot for training
 
@@ -127,6 +128,7 @@ mjpython -m sir.teleoperation.robosuite_teleop --env Lift --robot Panda \
 - Use `--save-data` flag to enable data collection
 - Use `--dataset-path` to specify where to save (default: `./data`)
 - Use `--dataset-name` to specify dataset name (default: auto-generated as `{env}_{robot}_{timestamp}`)
+- **If dataset name already exists, it will load and append new episodes to it** (useful for collecting more data)
 - Episodes marked as success are saved with state, actions, rewards, and camera images
 - Dataset format is compatible with HuggingFace LeRobot for training
 

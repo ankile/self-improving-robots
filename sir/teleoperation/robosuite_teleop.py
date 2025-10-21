@@ -591,43 +591,56 @@ def main():
             if args.save_data and episode_success and len(episode_data["actions"]) > 0:
                 # Initialize dataset on first save
                 if dataset is None:
-                    # Get observation shape from first observation
-                    obs_shape = episode_data["observations"][0].shape[0]
-                    action_shape = episode_data["actions"][0].shape[0]
+                    # Check if dataset already exists
+                    if dataset_path.exists():
+                        # Load existing dataset
+                        print(f"Loading existing dataset from {dataset_path}")
+                        dataset = LeRobotDataset(
+                            repo_id=dataset_name,
+                            root=str(dataset_path),
+                        )
+                        print(f"✓ Loaded existing dataset with {dataset.num_episodes} episodes")
+                    else:
+                        # Create new dataset
+                        print(f"Creating new dataset at {dataset_path}")
 
-                    # Build features dict
-                    features = {
-                        "observation.state": {
-                            "dtype": "float32",
-                            "shape": (obs_shape,),
-                            "names": [f"state_{i}" for i in range(obs_shape)],
-                        },
-                        "action": {
-                            "dtype": "float32",
-                            "shape": (action_shape,),
-                            "names": [f"action_{i}" for i in range(action_shape)],
-                        },
-                    }
+                        # Get observation shape from first observation
+                        obs_shape = episode_data["observations"][0].shape[0]
+                        action_shape = episode_data["actions"][0].shape[0]
 
-                    # Add camera features if present
-                    for cam_name in camera_names or []:
-                        cam_key = f"{cam_name}_image"
-                        if cam_key in episode_data:
-                            img_shape = episode_data[cam_key][0].shape
-                            features[f"observation.images.{cam_name}"] = {
-                                "dtype": "image",  # Use "image" not "uint8"
-                                "shape": img_shape,
-                                "names": ["height", "width", "channels"],
-                            }
+                        # Build features dict
+                        features = {
+                            "observation.state": {
+                                "dtype": "float32",
+                                "shape": (obs_shape,),
+                                "names": [f"state_{i}" for i in range(obs_shape)],
+                            },
+                            "action": {
+                                "dtype": "float32",
+                                "shape": (action_shape,),
+                                "names": [f"action_{i}" for i in range(action_shape)],
+                            },
+                        }
 
-                    dataset = LeRobotDataset.create(
-                        repo_id=dataset_name,
-                        fps=20,  # Control frequency
-                        root=str(dataset_path),  # Full path including dataset name
-                        robot_type=args.robot.lower(),
-                        features=features,
-                    )
-                    print(f"✓ Dataset initialized at {dataset_path}")
+                        # Add camera features if present
+                        for cam_name in camera_names or []:
+                            cam_key = f"{cam_name}_image"
+                            if cam_key in episode_data:
+                                img_shape = episode_data[cam_key][0].shape
+                                features[f"observation.images.{cam_name}"] = {
+                                    "dtype": "image",  # Use "image" not "uint8"
+                                    "shape": img_shape,
+                                    "names": ["height", "width", "channels"],
+                                }
+
+                        dataset = LeRobotDataset.create(
+                            repo_id=dataset_name,
+                            fps=20,  # Control frequency
+                            root=str(dataset_path),  # Full path including dataset name
+                            robot_type=args.robot.lower(),
+                            features=features,
+                        )
+                        print(f"✓ Dataset created at {dataset_path}")
 
                 # Add frames using add_frame() method (proper LeRobot API)
                 task_name = f"{args.env}_{args.robot}"

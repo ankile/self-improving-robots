@@ -347,26 +347,37 @@ def main():
             if should_reset and args.save_data and len(episode_buffer["actions"]) > 0:
                 # Save episode to dataset
                 if dataset is None:
-                    # Initialize dataset on first save
-                    dataset = LeRobotDataset.create(
-                        repo_id=dataset_name,
-                        fps=30,  # Approximate control frequency
-                        root=str(dataset_path),  # Full path including dataset name
-                        robot_type="panda",
-                        features={
-                            "observation.state": {
-                                "dtype": "float32",
-                                "shape": (obs.shape[0],),
-                                "names": ["state_dim_" + str(i) for i in range(obs.shape[0])]
-                            },
-                            "action": {
-                                "dtype": "float32",
-                                "shape": (action_dim,),
-                                "names": ["action_dim_" + str(i) for i in range(action_dim)]
+                    # Check if dataset already exists
+                    if dataset_path.exists():
+                        # Load existing dataset
+                        print(f"Loading existing dataset from {dataset_path}")
+                        dataset = LeRobotDataset(
+                            repo_id=dataset_name,
+                            root=str(dataset_path),
+                        )
+                        print(f"✓ Loaded existing dataset with {dataset.num_episodes} episodes")
+                    else:
+                        # Create new dataset
+                        print(f"Creating new dataset at {dataset_path}")
+                        dataset = LeRobotDataset.create(
+                            repo_id=dataset_name,
+                            fps=30,  # Approximate control frequency
+                            root=str(dataset_path),  # Full path including dataset name
+                            robot_type="panda",
+                            features={
+                                "observation.state": {
+                                    "dtype": "float32",
+                                    "shape": (obs.shape[0],),
+                                    "names": ["state_dim_" + str(i) for i in range(obs.shape[0])]
+                                },
+                                "action": {
+                                    "dtype": "float32",
+                                    "shape": (action_dim,),
+                                    "names": ["action_dim_" + str(i) for i in range(action_dim)]
+                                }
                             }
-                        }
-                    )
-                    print(f"✓ Dataset initialized at {dataset_path}")
+                        )
+                        print(f"✓ Dataset created at {dataset_path}")
 
                 # Prepare episode dict for LeRobot (expects lists, not arrays)
                 num_frames = len(episode_buffer["actions"])
