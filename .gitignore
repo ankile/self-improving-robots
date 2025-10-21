@@ -52,3 +52,6 @@ dmypy.json
 # Environments
 .env
 .env.local
+
+# Data
+data/

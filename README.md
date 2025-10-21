@@ -162,7 +162,9 @@ Develop methods that handle:
 │   ├── teleoperation/            # Teleoperation modules
 │   │   ├── __init__.py
 │   │   ├── __main__.py           # Entry point for python -m sir.teleoperation
-│   │   ├── spacemouse_teleop.py  # Main teleoperation script
+│   │   ├── maniskill_teleop.py   # ManiSkill teleoperation script
+│   │   ├── robosuite_teleop.py   # Robosuite teleoperation script
+│   │   ├── robosuite_spacemouse.py  # Robosuite SpaceMouse driver
 │   │   ├── utils.py              # Utility functions (deadzone, axis mapping, keyboard)
 │   │   └── robot_config.py       # Robot configuration utilities
 │   └── tests/                    # Test scripts

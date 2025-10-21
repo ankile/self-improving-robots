@@ -351,7 +351,7 @@ def main():
                     dataset = LeRobotDataset.create(
                         repo_id=dataset_name,
                         fps=30,  # Approximate control frequency
-                        root=args.dataset_path,
+                        root=str(dataset_path),  # Full path including dataset name
                         robot_type="panda",
                         features={
                             "observation.state": {
@@ -368,20 +368,21 @@ def main():
                     )
                     print(f"✓ Dataset initialized at {dataset_path}")
 
-                # Convert episode buffer to arrays
+                # Prepare episode dict for LeRobot (expects lists, not arrays)
+                num_frames = len(episode_buffer["actions"])
                 episode_data = {
-                    "observation.state": np.array(episode_buffer["observations"], dtype=np.float32),
-                    "action": np.array(episode_buffer["actions"], dtype=np.float32),
-                    "episode_index": np.full(len(episode_buffer["actions"]), saved_episode_count, dtype=np.int64),
-                    "frame_index": np.arange(len(episode_buffer["actions"]), dtype=np.int64),
-                    "timestamp": np.arange(len(episode_buffer["actions"]), dtype=np.float32) / 30.0,  # Approximate
-                    "next.done": np.array(episode_buffer["dones"], dtype=bool),
-                    "next.reward": np.array(episode_buffer["rewards"], dtype=np.float32),
-                    "next.success": np.full(len(episode_buffer["actions"]), episode_success, dtype=bool),
+                    "size": num_frames,
+                    "task": [args.env_id] * num_frames,  # Task name for each frame
+                    "episode_index": saved_episode_count,
+                    "observation.state": [obs.astype(np.float32) for obs in episode_buffer["observations"]],
+                    "action": [act.astype(np.float32) for act in episode_buffer["actions"]],
+                    "next.done": [bool(d) for d in episode_buffer["dones"]],
+                    "next.reward": [float(r) for r in episode_buffer["rewards"]],
+                    "next.success": [episode_success] * num_frames,
                 }
 
-                # Add episode to dataset
-                dataset.add_episode(episode_data)
+                # Save episode to dataset
+                dataset.save_episode(episode_data)
                 saved_episode_count += 1
                 print(f"✓ Episode saved to dataset (Total saved: {saved_episode_count})")
 

@@ -2,7 +2,7 @@
 Minimal teleoperation script for Robosuite environments using SpaceMouse.
 
 This script allows collecting demonstrations from Robosuite environments
-for conversion to LeRobot dataset format.
+and saving them to LeRobot dataset format.
 
 Usage:
     # macOS (REQUIRED - use mjpython for viewer support)
@@ -10,13 +10,35 @@ Usage:
 
     # With camera observations (agentview + wrist camera)
     mjpython -m sir.teleoperation.robosuite_teleop --env Lift --robot Panda \
-        --save-images --cameras "agentview,robot0_eye_in_hand"
+        --cameras "agentview,robot0_eye_in_hand"
+
+    # Save demonstrations to LeRobot dataset
+    mjpython -m sir.teleoperation.robosuite_teleop --env Lift --robot Panda \
+        --save-data --dataset-name my_demos \
+        --cameras "agentview,robot0_eye_in_hand"
+
+    # Save with auto-generated dataset name (env_robot_timestamp)
+    mjpython -m sir.teleoperation.robosuite_teleop --env Lift --robot Panda \
+        --save-data --cameras "agentview"
 
     # Linux
     python -m sir.teleoperation.robosuite_teleop --env Lift --robot Panda
 
     # Multi-arm
     mjpython -m sir.teleoperation.robosuite_teleop --env TwoArmLift --robot Baxter --config bimanual
+
+Controls:
+    - SpaceMouse: Control robot end-effector (6-DOF)
+    - Left button: Toggle gripper
+    - '1' key: Mark episode as SUCCESS and save to dataset (if --save-data enabled)
+    - '0' key: Mark episode as FAILURE (reset without saving)
+    - Ctrl+C: Quit
+
+Data Collection:
+    - Use --save-data flag to enable saving to LeRobot dataset
+    - Press '1' to save successful episodes, '0' to discard failures
+    - Dataset includes robot state, actions, rewards, and camera images
+    - Compatible with HuggingFace LeRobot for training
 """
 
 import argparse
@@ -25,6 +47,7 @@ import platform
 import sys
 import time
 from pathlib import Path
+from datetime import datetime
 
 import numpy as np
 
@@ -34,16 +57,22 @@ if platform.system() == "Darwin":
     if "MUJOCO_GL" not in os.environ or os.environ.get("MUJOCO_GL") == "":
         os.environ["MUJOCO_GL"] = "cgl"
 
-try:
-    import robosuite as suite
-    from robosuite import load_composite_controller_config
-    from robosuite.wrappers import VisualizationWrapper
-except ModuleNotFoundError as exc:
-    raise ImportError(
-        "Robosuite is required for this script. Install with: pip install robosuite"
-    ) from exc
+import robosuite as suite
+from robosuite import load_composite_controller_config
+from robosuite.wrappers import VisualizationWrapper
+import robosuite.macros as macros
 
 from sir.teleoperation.robosuite_spacemouse import RobosuiteSpaceMouse
+from sir.teleoperation.utils import KeyboardListener
+
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+# IMPORTANT: Set image convention to OpenCV (origin at top-left) instead of OpenGL (origin at bottom-left)
+# OpenGL (default): origin at bottom-left, Y-up → images rendered upside down
+# OpenCV: origin at top-left, Y-down → standard image format (PIL, cv2, LeRobot)
+# This must be set BEFORE creating the environment to take effect
+# Without this, all camera observations would be vertically flipped!
+macros.IMAGE_CONVENTION = "opencv"
 
 
 def save_example_images(obs, output_dir, camera_keys):
@@ -76,21 +105,35 @@ def save_example_images(obs, output_dir, camera_keys):
             print(f"  Unexpected shape for {cam_key}: {img_array.shape}")
 
 
-def teleop_episode(env, device, max_fr=20, save_images=False, output_dir=None, has_renderer=True):
+def teleop_episode(
+    env,
+    device,
+    kbd_listener,
+    max_fr=20,
+    save_data=False,
+    save_example_images_flag=False,
+    output_dir=None,
+    has_renderer=True,
+    camera_names=None,
+):
     """
     Teleoperate a single episode.
 
     Args:
         env: Robosuite environment
         device: SpaceMouse device
+        kbd_listener: KeyboardListener for detecting key presses
         max_fr (int): Frame rate limit (20 is real-time)
-        save_images (bool): Whether to save example images
-        output_dir (Path): Directory to save images
+        save_data (bool): Whether to save data to LeRobot dataset
+        save_example_images_flag (bool): Whether to save example images
+        output_dir (Path): Directory to save example images
         has_renderer (bool): Whether environment has onscreen renderer
+        camera_names (list): List of camera names for observations
 
     Returns:
-        dict: Episode data with observations, actions, rewards, etc.
-        None: If reset was requested (to trigger environment recreation)
+        tuple: (episode_data, episode_success) where:
+            - episode_data is dict with observations, actions, rewards, etc. (None if reset without completion)
+            - episode_success is True/False/None (None if reset without marking success/failure)
     """
     obs = env.reset()
     if has_renderer:
@@ -100,18 +143,38 @@ def teleop_episode(env, device, max_fr=20, save_images=False, output_dir=None, h
 
     # Storage for episode data
     episode_data = {
-        "observations": [obs],
+        "observations": [],
         "actions": [],
         "rewards": [],
         "dones": [],
     }
 
+    # Extract camera images if present
+    if camera_names:
+        camera_keys = [f"{cam}_image" for cam in camera_names]
+        for cam_key in camera_keys:
+            if cam_key in obs:
+                episode_data[cam_key] = []
+    else:
+        camera_keys = []
+
+    # Extract state observation (non-image keys)
+    state_keys = [k for k in obs.keys() if not k.endswith("_image")]
+    state_obs = np.concatenate([obs[k].flatten() for k in state_keys])
+    episode_data["observations"].append(state_obs)
+
+    # Store initial camera observations if saving data
+    if save_data:
+        for cam_key in camera_keys:
+            if cam_key in obs:
+                episode_data[cam_key].append(obs[cam_key].copy())
+
     print("\nEpisode started. Use SpaceMouse to control the robot.")
-    print("Right button to reset, Ctrl+C to quit.")
+    print("Press '1' for SUCCESS and save, '0' for FAILURE (no save), Ctrl+C to quit.")
     print(f"Observation keys: {list(obs.keys())}")
 
     # Check for camera observations and save example if requested
-    if save_images and output_dir is not None:
+    if save_example_images_flag and output_dir is not None:
         camera_keys = [k for k in obs.keys() if k.endswith("_image")]
         if camera_keys:
             print(f"Camera observations found: {camera_keys}")
@@ -125,10 +188,27 @@ def teleop_episode(env, device, max_fr=20, save_images=False, output_dir=None, h
     while True:
         start = time.time()
 
+        # Check for keyboard input
+        key = kbd_listener.read_key()
+        if key == "1":
+            print()
+            print("=" * 60)
+            print(f"SUCCESS! Episode length: {step_count} steps")
+            print("=" * 60)
+            print()
+            return (episode_data, True)
+        elif key == "0":
+            print()
+            print("=" * 60)
+            print(f"FAILURE! Episode length: {step_count} steps")
+            print("=" * 60)
+            print()
+            return (episode_data, False)
+
         # Check for reset - need to recreate environment due to viewer limitation
         if device.reset_requested:
             print(f"\nReset requested. Episode length: {step_count} steps")
-            return None  # Signal that env needs to be recreated
+            return (None, None)  # Signal that env needs to be recreated
 
         # Get SpaceMouse control
         control = device.control
@@ -141,7 +221,7 @@ def teleop_episode(env, device, max_fr=20, save_images=False, output_dir=None, h
         # Apply coordinate frame transformation (from Device.input2action)
         # Robot expects [pitch, roll, -yaw] not [roll, pitch, yaw]
         drot = raw_drot[[1, 0, 2]]  # Reorder to [pitch, roll, yaw]
-        drot[2] = -drot[2]           # Flip yaw sign → [pitch, roll, -yaw]
+        drot[2] = -drot[2]  # Flip yaw sign → [pitch, roll, -yaw]
 
         # Apply postprocessing: multiply by scale factors and clip
         # (matches Device._postprocess_device_outputs)
@@ -161,17 +241,27 @@ def teleop_episode(env, device, max_fr=20, save_images=False, output_dir=None, h
             env.render()
 
         # Store data
-        episode_data["observations"].append(obs)
-        episode_data["actions"].append(action)
+        # Extract state observation (non-image keys)
+        state_obs = np.concatenate([obs[k].flatten() for k in state_keys])
+        episode_data["observations"].append(state_obs)
+        episode_data["actions"].append(action.copy())
         episode_data["rewards"].append(reward)
         episode_data["dones"].append(done)
+
+        # Store camera observations if saving data
+        if save_data:
+            for cam_key in camera_keys:
+                if cam_key in obs:
+                    episode_data[cam_key].append(obs[cam_key].copy())
 
         step_count += 1
 
         # Check for task completion
         if done:
             print(f"\nEpisode completed! Length: {step_count} steps")
-            break
+            print("Press '1' to mark as SUCCESS and save, '0' to mark as FAILURE")
+            # Don't break - wait for user to mark success/failure
+            # break
 
         # Limit frame rate
         if max_fr is not None:
@@ -180,7 +270,8 @@ def teleop_episode(env, device, max_fr=20, save_images=False, output_dir=None, h
             if diff > 0:
                 time.sleep(diff)
 
-    return episode_data
+    # This should not be reached (user should press 1 or 0 to exit)
+    return (episode_data, None)
 
 
 def create_env(args):
@@ -335,14 +426,42 @@ def main():
         action="store_true",
         help="Run without onscreen viewer (allows camera obs on macOS)",
     )
+    parser.add_argument(
+        "--save-data",
+        action="store_true",
+        help="Save teleoperation data to LeRobotDataset",
+    )
+    parser.add_argument(
+        "--dataset-path",
+        type=str,
+        default="./data",
+        help="Path to save dataset (default: ./data)",
+    )
+    parser.add_argument(
+        "--dataset-name",
+        type=str,
+        default=None,
+        help="Name of the dataset. If not specified, will be generated as {env}_{robot}_{timestamp}",
+    )
     args = parser.parse_args()
+
+    # Check if LeRobotDataset is available when saving data
+    if args.save_data and LeRobotDataset is None:
+        print("=" * 70)
+        print("ERROR: LeRobotDataset not available")
+        print("=" * 70)
+        print("\nTo save data, you need to install lerobot:")
+        print("  pip install lerobot")
+        print("=" * 70)
+        sys.exit(1)
 
     # Check if running on macOS with regular python (not mjpython)
     if platform.system() == "Darwin" and not args.headless:
         # mjpython sets _MJPYTHON attribute in mujoco.viewer module
         try:
             import mujoco.viewer
-            is_mjpython = hasattr(mujoco.viewer, '_MJPYTHON')
+
+            is_mjpython = hasattr(mujoco.viewer, "_MJPYTHON")
         except (ImportError, AttributeError):
             is_mjpython = False
 
@@ -360,7 +479,9 @@ def main():
             else:
                 print("  mjpython -m sir.teleoperation.robosuite_teleop --env Lift --robot Panda")
             print("\nAlternatively, use --headless mode with regular python:")
-            print("  python -m sir.teleoperation.robosuite_teleop --env Lift --robot Panda --headless")
+            print(
+                "  python -m sir.teleoperation.robosuite_teleop --env Lift --robot Panda --headless"
+            )
             print("\nIf mjpython is not found, ensure mujoco is installed:")
             print("  pip install mujoco")
             print("=" * 70)
@@ -383,8 +504,37 @@ def main():
         rot_sensitivity=args.rot_sensitivity,
     )
 
-    # Setup output directory for images
+    # Initialize keyboard listener
+    print("\nInitializing keyboard listener...")
+    kbd_listener = KeyboardListener()
+    print("✓ Keyboard listener initialized (works regardless of window focus)")
+
+    # Setup output directory for example images
     output_dir = Path(args.output_dir) if args.save_images else None
+
+    # Parse camera names if provided
+    camera_names = None
+    if args.cameras:
+        camera_names = [cam.strip() for cam in args.cameras.split(",")]
+
+    # Data saving setup
+    dataset = None
+    saved_episode_count = 0
+    if args.save_data:
+        dataset_name = args.dataset_name
+        if dataset_name is None:
+            # Generate dataset name from env, robot and timestamp
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            env_name = args.env.lower().replace(" ", "_")
+            robot_name = args.robot.lower()
+            dataset_name = f"{env_name}_{robot_name}_{timestamp}"
+
+        dataset_path = Path(args.dataset_path) / dataset_name
+        print(f"\nData saving: ENABLED")
+        print(f"Dataset path: {dataset_path}")
+        print(f"Dataset name: {dataset_name}")
+    else:
+        print(f"\nData saving: DISABLED")
 
     print("\nSetup complete! Ready to teleoperate.")
     print("=" * 60)
@@ -406,11 +556,16 @@ def main():
             print(f"Creating environment: {args.env} with robot: {args.robot}")
             env = create_env(args)
 
-            episode_data = teleop_episode(
-                env, device, max_fr=args.max_fr,
-                save_images=args.save_images,
+            episode_data, episode_success = teleop_episode(
+                env,
+                device,
+                kbd_listener,
+                max_fr=args.max_fr,
+                save_data=args.save_data,
+                save_example_images_flag=args.save_images,
                 output_dir=output_dir,
-                has_renderer=not args.headless
+                has_renderer=not args.headless,
+                camera_names=camera_names,
             )
 
             # If None returned, user requested reset - continue to next episode
@@ -424,19 +579,91 @@ def main():
             print(f"\nEpisode Summary:")
             print(f"  Steps: {len(episode_data['actions'])}")
             print(f"  Total Reward: {total_reward:.3f}")
-            print(f"  Success: {episode_data['dones'][-1] if episode_data['dones'] else False}")
 
-            # TODO: Save episode data to LeRobot format
-            # This is where you would convert and save to LeRobot dataset
+            # Save episode data to LeRobot dataset if marked as success
+            if args.save_data and episode_success and len(episode_data["actions"]) > 0:
+                # Initialize dataset on first save
+                if dataset is None:
+                    # Get observation shape from first observation
+                    obs_shape = episode_data["observations"][0].shape[0]
+                    action_shape = episode_data["actions"][0].shape[0]
 
-            print("\nPress Ctrl+C to quit, or continue for another episode...")
+                    # Build features dict
+                    features = {
+                        "observation.state": {
+                            "dtype": "float32",
+                            "shape": (obs_shape,),
+                            "names": [f"state_{i}" for i in range(obs_shape)],
+                        },
+                        "action": {
+                            "dtype": "float32",
+                            "shape": (action_shape,),
+                            "names": [f"action_{i}" for i in range(action_shape)],
+                        },
+                    }
+
+                    # Add camera features if present
+                    for cam_name in camera_names or []:
+                        cam_key = f"{cam_name}_image"
+                        if cam_key in episode_data:
+                            img_shape = episode_data[cam_key][0].shape
+                            features[f"observation.images.{cam_name}"] = {
+                                "dtype": "image",  # Use "image" not "uint8"
+                                "shape": img_shape,
+                                "names": ["height", "width", "channels"],
+                            }
+
+                    dataset = LeRobotDataset.create(
+                        repo_id=dataset_name,
+                        fps=20,  # Control frequency
+                        root=str(dataset_path),  # Full path including dataset name
+                        robot_type=args.robot.lower(),
+                        features=features,
+                    )
+                    print(f"✓ Dataset initialized at {dataset_path}")
+
+                # Add frames using add_frame() method (proper LeRobot API)
+                task_name = f"{args.env}_{args.robot}"
+                num_frames = len(episode_data["actions"])
+
+                for i in range(num_frames):
+                    frame = {
+                        "task": task_name,
+                        "observation.state": episode_data["observations"][i].astype(np.float32),
+                        "action": episode_data["actions"][i].astype(np.float32),
+                    }
+
+                    # Add camera observations if present
+                    for cam_name in camera_names or []:
+                        cam_key = f"{cam_name}_image"
+                        if cam_key in episode_data:
+                            frame[f"observation.images.{cam_name}"] = episode_data[cam_key][i]
+
+                    dataset.add_frame(frame)
+
+                # Save the episode (no arguments - uses internal episode_buffer)
+                dataset.save_episode()
+                saved_episode_count += 1
+                print(f"✓ Episode saved to dataset (Total saved: {saved_episode_count})")
+            elif args.save_data and not episode_success:
+                print("Episode marked as failure - not saved to dataset")
+
+            print("\nReady for next episode...")
             time.sleep(1.0)
 
     except KeyboardInterrupt:
         print("\n\nShutting down...")
     finally:
+        print("\nCleaning up...")
+        if args.save_data and dataset is not None:
+            print(f"Finalizing dataset... ({saved_episode_count} episodes saved)")
+            dataset.finalize()
+        print("Stopping keyboard listener...")
+        kbd_listener.close()
+        print("Closing SpaceMouse...")
         device.close()
         if env is not None:
+            print("Closing environment...")
             env.close()
         print("Cleanup complete. Goodbye!")
 

@@ -106,11 +106,29 @@ python -m sir.teleoperation.robosuite_teleop --env Lift --robot Panda
 
 # With camera observations
 mjpython -m sir.teleoperation.robosuite_teleop --env Lift --robot Panda \
-  --save-images \
   --cameras "agentview,robot0_eye_in_hand"
+
+# Save demonstrations to LeRobot dataset
+mjpython -m sir.teleoperation.robosuite_teleop --env Lift --robot Panda \
+  --save-data --dataset-name my_demos \
+  --cameras "agentview,robot0_eye_in_hand"
+
+# Save with auto-generated dataset name (env_robot_timestamp)
+mjpython -m sir.teleoperation.robosuite_teleop --env Lift --robot Panda \
+  --save-data --cameras "agentview"
 ```
 
 **Why mjpython on macOS?** The MuJoCo viewer requires GUI operations on the main thread. Regular Python runs GUI code on background threads, causing NSWindow crashes. MuJoCo's `mjpython` wrapper ensures GUI operations run on the main thread.
+
+**Data Collection with LeRobotDataset (Robosuite):**
+- Press `1` to mark the current episode as **SUCCESS** and save it to the dataset
+- Press `0` to mark the current episode as **FAILURE** (resets without saving)
+- Dataset is saved locally to disk (NOT uploaded to HuggingFace Hub)
+- Use `--save-data` flag to enable data collection
+- Use `--dataset-path` to specify where to save (default: `./data`)
+- Use `--dataset-name` to specify dataset name (default: auto-generated as `{env}_{robot}_{timestamp}`)
+- Episodes marked as success are saved with state, actions, rewards, and camera images
+- Dataset format is compatible with HuggingFace LeRobot for training
 
 ### Manual Environment Setup
 If `DYLD_LIBRARY_PATH` is not set:
@@ -187,6 +205,11 @@ Version may differ - check with `brew --prefix hidapi`
   - Script automatically sets `MUJOCO_GL=cgl` on macOS
   - Works with mjpython viewer without conflicts
   - Example images saved to `./robosuite_images/` by default
+- **Image Convention**: Set to `"opencv"` for correct orientation
+  - OpenGL (default): origin at bottom-left, Y-up → images upside down
+  - OpenCV: origin at top-left, Y-down → standard image format
+  - Script sets `macros.IMAGE_CONVENTION = "opencv"` to ensure proper orientation
+  - Critical for LeRobot dataset compatibility and visual inspection
 - **Viewer Limitation**: MuJoCo viewer cannot be reopened → environment recreated for each episode
 - **macOS Critical**: MUST use `mjpython` not `python` - GUI operations require main thread
 
