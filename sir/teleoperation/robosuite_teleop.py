@@ -340,8 +340,12 @@ def create_env(args):
     # Create environment
     env = suite.make(**env_config)
 
-    # Wrap with visualization
-    env = VisualizationWrapper(env, indicator_configs=None)
+    # Optionally wrap with visualization aids (disabled by default for cleaner observations)
+    if args.visual_aids:
+        env = VisualizationWrapper(env, indicator_configs=None)
+        print("Visual aids enabled")
+    else:
+        print("Visual aids disabled (use --visual-aids to enable)")
 
     return env
 
@@ -432,6 +436,11 @@ def main():
         "--headless",
         action="store_true",
         help="Run without onscreen viewer (allows camera obs on macOS)",
+    )
+    parser.add_argument(
+        "--visual-aids",
+        action="store_true",
+        help="Enable visual aids (indicators) in the environment. Disabled by default for cleaner camera observations.",
     )
     parser.add_argument(
         "--save-data",

@@ -11,34 +11,52 @@ This script:
 Usage:
     python -m sir.training.train_act \
         --repo-id lift_minimal_state \
-        --root ./data/test_filtered \
-        --env Lift \
-        --robot Panda
+        --root ./data/test_filtered
 
 Example with custom parameters:
     python -m sir.training.train_act \
         --repo-id lift_minimal_state \
         --root ./data/test_filtered \
-        --env Lift \
-        --robot Panda \
         --batch-size 32 \
         --lr 1e-5 \
         --training-steps 20000 \
         --eval-freq 2000
+
+Example with Weights & Biases logging and video saving:
+    python -m sir.training.train_act \
+        --repo-id lift_minimal_state \
+        --root ./data/test_filtered \
+        --use-wandb \
+        --wandb-project my-act-project \
+        --wandb-run-name lift_experiment_1 \
+        --save-video
+
+Example with different environment:
+    python -m sir.training.train_act \
+        --repo-id stack_cube_demos \
+        --root ./data \
+        --env StackCube \
+        --robot Sawyer
 
 Note: Camera observations are automatically detected from the dataset/policy.
       The script will configure the evaluation environment to match.
 """
 
 import argparse
+import gc
 import os
 import platform
+import warnings
 from pathlib import Path
 from typing import Any, Dict, Optional
+
+# Suppress Pydantic warnings from library code (robosuite/lerobot dependencies)
+warnings.filterwarnings("ignore", category=UserWarning, module="pydantic._internal._generate_schema")
 
 import imageio
 import numpy as np
 import torch
+import wandb
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
@@ -74,8 +92,8 @@ def parse_args():
     )
 
     # Environment args
-    parser.add_argument("--env", type=str, default="Lift", help="Robosuite environment name")
-    parser.add_argument("--robot", type=str, default="Panda", help="Robot name")
+    parser.add_argument("--env", type=str, default="Lift", help="Robosuite environment name (default: Lift)")
+    parser.add_argument("--robot", type=str, default="Panda", help="Robot name (default: Panda)")
 
     # Training args
     parser.add_argument("--batch-size", type=int, default=16, help="Batch size for training")
@@ -91,8 +109,8 @@ def parse_args():
     parser.add_argument(
         "--eval-freq",
         type=int,
-        default=10,
-        help="Evaluate every N steps (default: 10 for debugging, set to 1000+ for real training)",
+        default=1000,
+        help="Evaluate every N steps (default: 1000, use 10 for quick debugging)",
     )
     parser.add_argument(
         "--eval-episodes", type=int, default=10, help="Number of episodes to run during evaluation"
@@ -138,6 +156,25 @@ def parse_args():
     parser.add_argument(
         "--video-dir", type=str, default="./videos", help="Directory to save evaluation videos"
     )
+    parser.add_argument(
+        "--visual-aids",
+        action="store_true",
+        help="Enable visual aids (indicators) in evaluation environment. Disabled by default for cleaner observations.",
+    )
+
+    # Wandb args
+    parser.add_argument(
+        "--use-wandb", action="store_true", help="Enable Weights & Biases logging"
+    )
+    parser.add_argument(
+        "--wandb-project", type=str, default="act-training", help="Wandb project name"
+    )
+    parser.add_argument(
+        "--wandb-entity", type=str, default=None, help="Wandb entity/team name (optional)"
+    )
+    parser.add_argument(
+        "--wandb-run-name", type=str, default=None, help="Wandb run name (optional)"
+    )
 
     return parser.parse_args()
 
@@ -179,6 +216,7 @@ def create_robosuite_env(
     camera_height=None,
     camera_width=None,
     render_size=(240, 320),
+    visual_aids=False,
 ):
     """Create a Robosuite environment for evaluation.
 
@@ -189,6 +227,7 @@ def create_robosuite_env(
         camera_height: Height of camera images (must match training data)
         camera_width: Width of camera images (must match training data)
         render_size: (height, width) for video rendering (default: 240x320)
+        visual_aids: Enable visual aids/indicators in the environment (default: False)
     """
     controller_config = load_composite_controller_config(
         controller=None,  # Use default
@@ -222,7 +261,13 @@ def create_robosuite_env(
         env_config["camera_widths"] = camera_width
 
     env = suite.make(**env_config)
-    env = VisualizationWrapper(env, indicator_configs=None)
+
+    # Optionally wrap with visualization aids (disabled by default for cleaner observations)
+    if visual_aids:
+        env = VisualizationWrapper(env, indicator_configs=None)
+        print("Visual aids enabled in evaluation environment")
+    else:
+        print("Visual aids disabled in evaluation environment (use --visual-aids to enable)")
 
     # Wrap with render capability
     render_camera = camera_names[0] if camera_names else "agentview"
@@ -242,7 +287,7 @@ def evaluate_policy(
     save_video: bool = False,
     output_dir: str = "./videos",
     step: Optional[int] = None,
-) -> Dict[str, float]:
+) -> tuple[Dict[str, float], Optional[str]]:
     """
     Evaluate the policy in the environment.
 
@@ -259,7 +304,9 @@ def evaluate_policy(
         step: Current training step (for video naming)
 
     Returns:
-        dict: Evaluation metrics (success_rate, avg_reward, avg_length)
+        tuple: (metrics dict, video_path)
+            - metrics: Dict with success_rate, avg_reward, avg_length
+            - video_path: Path to saved video (None if save_video=False)
     """
     policy.eval()
 
@@ -381,6 +428,7 @@ def evaluate_policy(
     }
 
     # Save video if requested
+    video_path = None
     if save_video and all_frames is not None and len(all_frames) > 0:
         # Create output directory
         output_path = Path(output_dir)
@@ -389,18 +437,17 @@ def evaluate_policy(
         # Create video filename
         step_str = f"step_{step}" if step is not None else "final"
         video_name = f"eval_{step_str}.mp4"
-        video_path = output_path / video_name
+        video_path = str(output_path / video_name)
 
-        # Write video using imageio
+        # Write video using imageio (use context manager for proper cleanup)
         fps = 20  # Robosuite control frequency
-        writer = imageio.get_writer(video_path, fps=fps)
-        for frame in all_frames:
-            writer.append_data(frame)
-        writer.close()
+        with imageio.get_writer(video_path, fps=fps) as writer:
+            for frame in all_frames:
+                writer.append_data(frame)
 
         print(f"✓ Saved evaluation video to: {video_path}")
 
-    return metrics
+    return metrics, video_path
 
 
 def train(args):
@@ -418,6 +465,39 @@ def train(args):
     print(f"Action chunk size: {args.chunk_size}")
     print("=" * 60)
     print()
+
+    # Initialize Weights & Biases
+    if args.use_wandb:
+        wandb.init(
+            project=args.wandb_project,
+            entity=args.wandb_entity,
+            name=args.wandb_run_name,
+            config={
+                # Dataset config
+                "dataset/repo_id": args.repo_id,
+                "dataset/root": args.root,
+                # Environment config
+                "environment/env_name": args.env,
+                "environment/robot": args.robot,
+                # Training config
+                "training/batch_size": args.batch_size,
+                "training/lr": args.lr,
+                "training/training_steps": args.training_steps,
+                "training/eval_freq": args.eval_freq,
+                "training/eval_episodes": args.eval_episodes,
+                "training/max_steps": args.max_steps,
+                # Policy config
+                "policy/chunk_size": args.chunk_size,
+                "policy/n_obs_steps": args.n_obs_steps,
+                "policy/n_action_steps": args.n_action_steps,
+                # System config
+                "system/device": args.device,
+                "system/num_workers": args.num_workers,
+                "system/checkpoint_dir": args.checkpoint_dir,
+            },
+        )
+        print(f"✓ Initialized Weights & Biases (project: {args.wandb_project})")
+        print()
 
     # Load dataset metadata first to get features and stats
     print("Loading dataset metadata...")
@@ -548,6 +628,7 @@ def train(args):
         camera_names=camera_names if camera_names else None,
         camera_height=camera_height,
         camera_width=camera_width,
+        visual_aids=args.visual_aids,
     )
     print(f"✓ Evaluation environment created")
     print()
@@ -603,10 +684,22 @@ def train(args):
                     loss_str += f" kl: {loss_dict['kl_loss']:.4f}"
                 print(loss_str)
 
+                # Log to wandb
+                if args.use_wandb:
+                    wandb_log = {
+                        "train/loss": loss.item(),
+                        "train/step": step,
+                    }
+                    if "l1_loss" in loss_dict:
+                        wandb_log["train/l1_loss"] = loss_dict["l1_loss"]
+                    if "kl_loss" in loss_dict:
+                        wandb_log["train/kl_loss"] = loss_dict["kl_loss"]
+                    wandb.log(wandb_log, step=step)
+
             # Evaluation
             if step > 0 and step % args.eval_freq == 0:
                 print("\nEvaluating policy...")
-                metrics = evaluate_policy(
+                metrics, video_path = evaluate_policy(
                     policy,
                     preprocessor,
                     dataset_metadata.stats["action"],
@@ -625,9 +718,31 @@ def train(args):
                 print(f"  Avg Length: {metrics['avg_length']:.1f}")
                 print()
 
-                # Save best model
+                # Update best success rate
+                is_best = False
                 if metrics["success_rate"] > best_success_rate:
                     best_success_rate = metrics["success_rate"]
+                    is_best = True
+
+                # Log to wandb
+                if args.use_wandb:
+                    wandb_log = {
+                        "eval/success_rate": metrics["success_rate"],
+                        "eval/avg_reward": metrics["avg_reward"],
+                        "eval/avg_length": metrics["avg_length"],
+                        "eval/best_success_rate": best_success_rate,
+                    }
+                    # Log video if available
+                    if video_path is not None:
+                        wandb_log["eval/video"] = wandb.Video(video_path, format="mp4")
+                    wandb.log(wandb_log, step=step)
+
+                    # Force garbage collection to clean up video files
+                    if video_path is not None:
+                        gc.collect()
+
+                # Save best model
+                if is_best:
                     checkpoint_path = checkpoint_dir / "best_model"
                     policy.save_pretrained(checkpoint_path)
                     preprocessor.save_pretrained(checkpoint_path)
@@ -653,7 +768,7 @@ def train(args):
     print("\n" + "=" * 60)
     print("Training complete! Running final evaluation...")
     print("=" * 60)
-    metrics = evaluate_policy(
+    metrics, video_path = evaluate_policy(
         policy,
         preprocessor,
         dataset_metadata.stats["action"],
@@ -672,6 +787,22 @@ def train(args):
     print(f"  Avg Length: {metrics['avg_length']:.1f}")
     print()
 
+    # Log final evaluation to wandb
+    if args.use_wandb:
+        wandb_log = {
+            "final_eval/success_rate": metrics["success_rate"],
+            "final_eval/avg_reward": metrics["avg_reward"],
+            "final_eval/avg_length": metrics["avg_length"],
+        }
+        # Log video if available
+        if video_path is not None:
+            wandb_log["final_eval/video"] = wandb.Video(video_path, format="mp4")
+        wandb.log(wandb_log, step=step)
+
+        # Force garbage collection to clean up video files
+        if video_path is not None:
+            gc.collect()
+
     # Save final model
     checkpoint_path = checkpoint_dir / "final_model"
     policy.save_pretrained(checkpoint_path)
@@ -681,6 +812,12 @@ def train(args):
 
     # Cleanup
     eval_env.close()
+
+    # Finish wandb run
+    if args.use_wandb:
+        wandb.finish()
+        print("✓ Finished Weights & Biases logging")
+
     print("\nDone!")
 
 

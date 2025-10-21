@@ -117,7 +117,17 @@ mjpython -m sir.teleoperation.robosuite_teleop --env Lift --robot Panda \
 # Save with auto-generated dataset name (env_robot_timestamp)
 mjpython -m sir.teleoperation.robosuite_teleop --env Lift --robot Panda \
   --save-data --cameras "agentview"
+
+# Enable visual aids (indicators) in the environment (disabled by default)
+mjpython -m sir.teleoperation.robosuite_teleop --env Lift --robot Panda \
+  --visual-aids
 ```
+
+**Visual Aids (Indicators):**
+- **Default: DISABLED** - Visual aids are turned off by default to ensure cleaner camera observations for training
+- Use `--visual-aids` flag to enable visual indicators if needed for easier teleoperation
+- Visual aids appear in both the viewer and camera renders when enabled
+- For research validity, it's recommended to keep them disabled during data collection
 
 **Why mjpython on macOS?** The MuJoCo viewer requires GUI operations on the main thread. Regular Python runs GUI code on background threads, causing NSWindow crashes. MuJoCo's `mjpython` wrapper ensures GUI operations run on the main thread.
 
@@ -138,6 +148,61 @@ If `DYLD_LIBRARY_PATH` is not set:
 export DYLD_LIBRARY_PATH=/opt/homebrew/Cellar/hidapi/0.15.0/lib:$DYLD_LIBRARY_PATH
 ```
 Version may differ - check with `brew --prefix hidapi`
+
+### ACT Policy Training
+
+Train an Action Chunking Transformer (ACT) policy on collected demonstration data using LeRobot:
+
+```bash
+# Basic training (state-only)
+python -m sir.training.train_act \
+  --repo-id lift_demos \
+  --root ./data
+
+# Training with vision (cameras detected from dataset)
+python -m sir.training.train_act \
+  --repo-id lift_vision_demos \
+  --root ./data \
+  --env Lift \
+  --robot Panda
+
+# Training with custom hyperparameters
+python -m sir.training.train_act \
+  --repo-id my_demos \
+  --root ./data \
+  --batch-size 32 \
+  --lr 1e-5 \
+  --training-steps 20000 \
+  --eval-freq 1000 \
+  --chunk-size 20
+
+# Training with Weights & Biases logging and video saving
+python -m sir.training.train_act \
+  --repo-id my_demos \
+  --root ./data \
+  --use-wandb \
+  --wandb-project act-training \
+  --save-video
+
+# Enable visual aids in evaluation environment (disabled by default)
+python -m sir.training.train_act \
+  --repo-id my_demos \
+  --root ./data \
+  --visual-aids
+```
+
+**Visual Aids in Evaluation:**
+- **Default: DISABLED** - Visual aids are turned off by default in the evaluation environment for cleaner observations
+- Use `--visual-aids` flag to enable visual indicators during policy evaluation if needed
+- Keeps evaluation observations consistent with training data (which should be collected without visual aids)
+
+**Key Features:**
+- Automatically detects camera observations from dataset (state-only or vision-based)
+- Configures evaluation environment to match training data (camera resolution, robot type)
+- Periodic evaluation and checkpoint saving during training
+- Optional Weights & Biases logging for experiment tracking
+- Optional video recording of evaluation rollouts
+- Best model saved based on success rate
 
 ## Architecture & Key Concepts
 
@@ -214,6 +279,7 @@ Version may differ - check with `brew --prefix hidapi`
   - Critical for LeRobot dataset compatibility and visual inspection
 - **Viewer Limitation**: MuJoCo viewer cannot be reopened → environment recreated for each episode
 - **macOS Critical**: MUST use `mjpython` not `python` - GUI operations require main thread
+- **Visual Aids**: Disabled by default for cleaner observations. Use `--visual-aids` flag to enable visual indicators if needed for teleoperation. When enabled, indicators appear in both viewer and camera renders.
 
 ### Environment-Specific Notes
 - **ARM Mac SpaceMouse**: Standard `easyhid` doesn't work on Apple Silicon; must use patched version from https://github.com/bglopez/python-easyhid.git
