@@ -56,3 +56,4 @@ dmypy.json
 # Data
 data/
 videos/
+checkpoints/
