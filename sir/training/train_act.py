@@ -75,8 +75,8 @@ def parse_args():
                         help="Learning rate (default: 1e-5, ACT default)")
     parser.add_argument("--training-steps", type=int, default=10000,
                         help="Number of training steps (default: 10000)")
-    parser.add_argument("--eval-freq", type=int, default=1000,
-                        help="Evaluate every N steps")
+    parser.add_argument("--eval-freq", type=int, default=10,
+                        help="Evaluate every N steps (default: 10 for debugging, set to 1000+ for real training)")
     parser.add_argument("--eval-episodes", type=int, default=10,
                         help="Number of episodes to run during evaluation")
     parser.add_argument("--max-steps", type=int, default=400,
@@ -339,6 +339,14 @@ def train(args):
             for key in batch:
                 if isinstance(batch[key], torch.Tensor):
                     batch[key] = batch[key].to(args.device)
+
+            # Remove temporal dimension from observations (n_obs_steps=1)
+            # ACT expects observations without temporal dimension when using single observation step
+            for key in list(batch.keys()):
+                if key.startswith("observation.") and not key.endswith("_is_pad"):
+                    if isinstance(batch[key], torch.Tensor) and batch[key].shape[1] == 1:
+                        # Squeeze out the temporal dimension (dim=1)
+                        batch[key] = batch[key].squeeze(1)
 
             # Forward pass (returns loss and loss dict)
             loss, loss_dict = policy.forward(batch)
