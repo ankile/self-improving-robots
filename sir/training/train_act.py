@@ -25,9 +25,14 @@ Example with custom parameters:
         --lr 1e-5 \
         --training-steps 20000 \
         --eval-freq 2000
+
+Note: Camera observations are automatically detected from the dataset/policy.
+      The script will configure the evaluation environment to match.
 """
 
 import argparse
+import os
+import platform
 from pathlib import Path
 
 import numpy as np
@@ -51,6 +56,10 @@ import robosuite.macros as macros
 
 # Set image convention to OpenCV (must be before env creation)
 macros.IMAGE_CONVENTION = "opencv"
+
+# Set MuJoCo GL backend to CGL on macOS for proper offscreen rendering
+if platform.system() == "Darwin":
+    os.environ["MUJOCO_GL"] = "cgl"
 
 
 def parse_args():
@@ -101,26 +110,46 @@ def parse_args():
     return parser.parse_args()
 
 
-def create_robosuite_env(env_name, robot_name):
-    """Create a Robosuite environment for evaluation."""
+def create_robosuite_env(env_name, robot_name, camera_names=None, camera_height=None, camera_width=None):
+    """Create a Robosuite environment for evaluation.
+
+    Args:
+        env_name: Name of the Robosuite environment
+        robot_name: Name of the robot
+        camera_names: List of camera names to use (None = no cameras, state-only)
+        camera_height: Height of camera images (must match training data)
+        camera_width: Width of camera images (must match training data)
+    """
     controller_config = load_composite_controller_config(
         controller=None,  # Use default
         robot=robot_name,
     )
+
+    # Configure camera observations based on camera_names
+    use_cameras = camera_names is not None and len(camera_names) > 0
 
     env_config = {
         "env_name": env_name,
         "robots": robot_name,
         "controller_configs": controller_config,
         "has_renderer": False,  # No onscreen rendering during training
-        "has_offscreen_renderer": False,  # No camera observations for now
-        "render_camera": "agentview",
+        "has_offscreen_renderer": use_cameras,  # Enable if cameras specified
         "ignore_done": True,
-        "use_camera_obs": False,
+        "use_camera_obs": use_cameras,  # Enable if cameras specified
         "reward_shaping": True,
         "control_freq": 20,
         "hard_reset": False,
     }
+
+    # Add camera-specific config if cameras are used
+    if use_cameras:
+        if camera_height is None or camera_width is None:
+            raise ValueError("camera_height and camera_width must be specified when using cameras")
+
+        env_config["render_camera"] = camera_names[0]  # Default render camera
+        env_config["camera_names"] = camera_names
+        env_config["camera_heights"] = camera_height
+        env_config["camera_widths"] = camera_width
 
     env = suite.make(**env_config)
     env = VisualizationWrapper(env, indicator_configs=None)
@@ -128,13 +157,14 @@ def create_robosuite_env(env_name, robot_name):
     return env
 
 
-def evaluate_policy(policy, postprocessor, env, num_episodes=10, max_steps=400, device="cpu"):
+def evaluate_policy(policy, preprocessor, action_stats, env, num_episodes=10, max_steps=400, device="cpu"):
     """
     Evaluate the policy in the environment.
 
     Args:
         policy: ACT policy
-        postprocessor: Postprocessor for denormalizing actions
+        preprocessor: Preprocessor for normalizing observations
+        action_stats: Action statistics from dataset (for denormalization)
         env: Robosuite environment
         num_episodes: Number of episodes to evaluate
         max_steps: Maximum steps per episode
@@ -149,6 +179,26 @@ def evaluate_policy(policy, postprocessor, env, num_episodes=10, max_steps=400, 
     total_rewards = []
     episode_lengths = []
 
+    # Get camera names from policy config (if any)
+    camera_names = []
+
+    if hasattr(policy.config, 'image_features') and policy.config.image_features:
+        # Extract camera names from image feature keys
+        # e.g., "observation.images.agentview" -> "agentview"
+        for img_key in policy.config.image_features:
+            if img_key.startswith("observation.images."):
+                cam_name = img_key.replace("observation.images.", "")
+                camera_names.append(cam_name)
+
+    # Prepare action denormalization stats (convert once for efficiency)
+    # MPS doesn't support float64, so we ensure float32
+    if isinstance(action_stats["mean"], torch.Tensor):
+        action_mean = action_stats["mean"].to(device=device, dtype=torch.float32)
+        action_std = action_stats["std"].to(device=device, dtype=torch.float32)
+    else:
+        action_mean = torch.tensor(action_stats["mean"], device=device, dtype=torch.float32)
+        action_std = torch.tensor(action_stats["std"], device=device, dtype=torch.float32)
+
     for ep in range(num_episodes):
         obs = env.reset()
         policy.reset()  # Reset action queue
@@ -162,17 +212,43 @@ def evaluate_policy(policy, postprocessor, env, num_episodes=10, max_steps=400, 
 
         for step in range(max_steps):
             # Prepare observation batch for policy
+            obs_dict = {}
+
+            # Add state observation
             state_tensor = torch.from_numpy(state).float().unsqueeze(0).to(device)
-            obs_dict = {"observation.state": state_tensor}
+            obs_dict["observation.state"] = state_tensor
+
+            # Add camera observations
+            for cam_name in camera_names:
+                img_key = f"{cam_name}_image"
+                if img_key in obs:
+                    # Get image (shape: H x W x C, values 0-255)
+                    # Resolution matches training data exactly (configured in env)
+                    img = obs[img_key]
+
+                    # Convert to torch tensor and normalize to [0, 1]
+                    img_tensor = torch.from_numpy(img).float() / 255.0
+
+                    # Rearrange to C x H x W format
+                    img_tensor = img_tensor.permute(2, 0, 1)
+
+                    # Add batch dimension
+                    img_tensor = img_tensor.unsqueeze(0).to(device)
+
+                    # Add to obs_dict
+                    obs_dict[f"observation.images.{cam_name}"] = img_tensor
+
+            # Apply preprocessing (normalization) to observations
+            obs_dict = preprocessor(obs_dict)
 
             with torch.no_grad():
                 # ACT's select_action returns a single action (manages action queue internally)
                 action_tensor = policy.select_action(obs_dict)
 
-                # Denormalize action
-                action_batch = {"action": action_tensor}
-                action_batch = postprocessor(action_batch)
-                action = action_batch["action"].cpu().numpy()[0]
+                # Denormalize action manually using dataset stats
+                # normalized = (value - mean) / std  ->  value = normalized * std + mean
+                action_denorm = action_tensor * action_std + action_mean
+                action = action_denorm.cpu().numpy()[0]
 
             # Step environment
             obs, reward, done, info = env.step(action)
@@ -308,10 +384,43 @@ def train(args):
     # Create optimizer (use policy's get_optim_params for proper param groups)
     optimizer = torch.optim.Adam(policy.get_optim_params(), lr=args.lr)
 
+    # Detect camera names and resolution from dataset features
+    camera_names = []
+    camera_height = None
+    camera_width = None
+
+    # Check if we have image features in the dataset
+    for key, feature in features.items():
+        if key.startswith("observation.images.") and feature.type == FeatureType.VISUAL:
+            cam_name = key.replace("observation.images.", "")
+            camera_names.append(cam_name)
+
+            # Extract image shape (C, H, W)
+            if len(feature.shape) == 3:
+                c, h, w = feature.shape
+                # All cameras should have the same resolution
+                if camera_height is None:
+                    camera_height = h
+                    camera_width = w
+                elif camera_height != h or camera_width != w:
+                    print(f"WARNING: Camera {cam_name} has different resolution ({h}x{w}) than expected ({camera_height}x{camera_width})")
+
+    if camera_names:
+        print(f"Detected camera features from dataset: {camera_names}")
+        print(f"Camera resolution: {camera_height}×{camera_width}")
+    else:
+        print("No camera features detected in dataset (state-only policy)")
+
     # Create environment for evaluation
     print("Creating evaluation environment...")
-    eval_env = create_robosuite_env(args.env, args.robot)
-    print("✓ Evaluation environment created")
+    eval_env = create_robosuite_env(
+        args.env,
+        args.robot,
+        camera_names=camera_names if camera_names else None,
+        camera_height=camera_height,
+        camera_width=camera_width
+    )
+    print(f"✓ Evaluation environment created")
     print()
 
     # Create checkpoint directory
@@ -370,7 +479,8 @@ def train(args):
                 print("\nEvaluating policy...")
                 metrics = evaluate_policy(
                     policy,
-                    postprocessor,
+                    preprocessor,
+                    dataset_metadata.stats["action"],
                     eval_env,
                     num_episodes=args.eval_episodes,
                     max_steps=args.max_steps,
@@ -413,7 +523,8 @@ def train(args):
     print("=" * 60)
     metrics = evaluate_policy(
         policy,
-        postprocessor,
+        preprocessor,
+        dataset_metadata.stats["action"],
         eval_env,
         num_episodes=args.eval_episodes * 2,  # More episodes for final eval
         max_steps=args.max_steps,

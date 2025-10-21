@@ -51,7 +51,7 @@ python -m sir.training.train_act \
 - `--batch-size`: Batch size (default: 16)
 - `--lr`: Learning rate (default: 1e-5)
 - `--training-steps`: Number of training steps (default: 10000)
-- `--eval-freq`: Evaluate every N steps (default: 1000)
+- `--eval-freq`: Evaluate every N steps (default: 10 for debugging, use 1000+ for real training)
 - `--eval-episodes`: Episodes per evaluation (default: 10)
 - `--max-steps`: Max steps per episode (default: 400)
 
