@@ -140,6 +140,7 @@ def teleop_episode(
         env.render()
 
     device.start_control()
+    device.reset_gripper()  # Reset gripper to open position
 
     # Storage for episode data
     episode_data = {
@@ -158,28 +159,13 @@ def teleop_episode(
     else:
         camera_keys = []
 
-    # Extract state observation
-    # Use minimal task-relevant state: end effector pose + gripper
-    # No joints (IK handled by controller), no object state, no velocities
-    state_keys = [
-        "robot0_eef_pos",        # 3 dims - end effector position
-        "robot0_eef_quat",       # 4 dims - end effector orientation (quaternion)
-        "robot0_gripper_qpos",   # 2 dims - gripper finger positions
-        # Total: 9 dims
-    ]
-    state_keys = [k for k in state_keys if k in obs]
-    state_obs = np.concatenate([obs[k].flatten() for k in state_keys])
-
-    episode_data["observations"].append(state_obs)
-
-    # Store initial camera observations if saving data
-    if save_data:
-        for cam_key in camera_keys:
-            if cam_key in obs:
-                episode_data[cam_key].append(obs[cam_key].copy())
+    # Note: We don't store initial observation here because we only record timesteps
+    # with active spacemouse input. Observations will be recorded in the loop when
+    # there's actual control input.
 
     print("\nEpisode started. Use SpaceMouse to control the robot.")
     print("Press '1' for SUCCESS and save, '0' for FAILURE (no save), Ctrl+C to quit.")
+    print("Note: Only recording timesteps with active spacemouse input (no idle frames)")
     print(f"Observation keys: {list(obs.keys())}")
 
     # Check for camera observations and save example if requested
@@ -193,6 +179,7 @@ def teleop_episode(
     print()
 
     step_count = 0
+    prev_gripper = device.control_gripper  # Track gripper state for change detection
 
     while True:
         start = time.time()
@@ -249,23 +236,31 @@ def teleop_episode(
         if has_renderer:
             env.render()
 
-        # Store data
-        # Extract state observation (using same logic as initial obs)
-        state_keys = ["robot0_eef_pos", "robot0_eef_quat", "robot0_gripper_qpos"]
-        state_keys = [k for k in state_keys if k in obs]
-        state_obs = np.concatenate([obs[k].flatten() for k in state_keys])
-        episode_data["observations"].append(state_obs)
-        episode_data["actions"].append(action.copy())
-        episode_data["rewards"].append(reward)
-        episode_data["dones"].append(done)
+        # Check if there's actual spacemouse input (only record when user is actively controlling)
+        # Check: raw control magnitude OR gripper button press
+        has_input = np.any(np.abs(control) > 0.01) or (gripper != prev_gripper)
 
-        # Store camera observations if saving data
-        if save_data:
-            for cam_key in camera_keys:
-                if cam_key in obs:
-                    episode_data[cam_key].append(obs[cam_key].copy())
+        # Only store data when there's actual input from the spacemouse
+        if has_input:
+            # Extract state observation (using same logic as initial obs)
+            state_keys = ["robot0_eef_pos", "robot0_eef_quat", "robot0_gripper_qpos"]
+            state_keys = [k for k in state_keys if k in obs]
+            state_obs = np.concatenate([obs[k].flatten() for k in state_keys])
+            episode_data["observations"].append(state_obs)
+            episode_data["actions"].append(action.copy())
+            episode_data["rewards"].append(reward)
+            episode_data["dones"].append(done)
 
-        step_count += 1
+            # Store camera observations if saving data
+            if save_data:
+                for cam_key in camera_keys:
+                    if cam_key in obs:
+                        episode_data[cam_key].append(obs[cam_key].copy())
+
+            step_count += 1
+
+        # Update previous gripper state
+        prev_gripper = gripper
 
         # Check for task completion
         if done:

@@ -239,6 +239,10 @@ class RobosuiteSpaceMouse:
         """Check if reset was requested."""
         return self._reset_requested
 
+    def reset_gripper(self):
+        """Reset gripper to open position."""
+        self.gripper_closed = False
+
     def close(self):
         """Close the device connection."""
         self._enabled = False
