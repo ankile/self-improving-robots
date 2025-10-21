@@ -34,6 +34,7 @@ import argparse
 import os
 import platform
 from pathlib import Path
+from typing import Any, Dict, Optional
 
 import imageio
 import numpy as np
@@ -67,52 +68,76 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Train ACT policy with LeRobot")
 
     # Dataset args
-    parser.add_argument("--repo-id", type=str, required=True,
-                        help="Dataset repo ID (name)")
-    parser.add_argument("--root", type=str, default="./data",
-                        help="Root directory containing datasets")
+    parser.add_argument("--repo-id", type=str, required=True, help="Dataset repo ID (name)")
+    parser.add_argument(
+        "--root", type=str, default="./data", help="Root directory containing datasets"
+    )
 
     # Environment args
-    parser.add_argument("--env", type=str, default="Lift",
-                        help="Robosuite environment name")
-    parser.add_argument("--robot", type=str, default="Panda",
-                        help="Robot name")
+    parser.add_argument("--env", type=str, default="Lift", help="Robosuite environment name")
+    parser.add_argument("--robot", type=str, default="Panda", help="Robot name")
 
     # Training args
-    parser.add_argument("--batch-size", type=int, default=16,
-                        help="Batch size for training")
-    parser.add_argument("--lr", type=float, default=1e-5,
-                        help="Learning rate (default: 1e-5, ACT default)")
-    parser.add_argument("--training-steps", type=int, default=10000,
-                        help="Number of training steps (default: 10000)")
-    parser.add_argument("--eval-freq", type=int, default=10,
-                        help="Evaluate every N steps (default: 10 for debugging, set to 1000+ for real training)")
-    parser.add_argument("--eval-episodes", type=int, default=10,
-                        help="Number of episodes to run during evaluation")
-    parser.add_argument("--max-steps", type=int, default=400,
-                        help="Maximum steps per episode during evaluation")
+    parser.add_argument("--batch-size", type=int, default=16, help="Batch size for training")
+    parser.add_argument(
+        "--lr", type=float, default=1e-5, help="Learning rate (default: 1e-5, ACT default)"
+    )
+    parser.add_argument(
+        "--training-steps",
+        type=int,
+        default=10000,
+        help="Number of training steps (default: 10000)",
+    )
+    parser.add_argument(
+        "--eval-freq",
+        type=int,
+        default=10,
+        help="Evaluate every N steps (default: 10 for debugging, set to 1000+ for real training)",
+    )
+    parser.add_argument(
+        "--eval-episodes", type=int, default=10, help="Number of episodes to run during evaluation"
+    )
+    parser.add_argument(
+        "--max-steps", type=int, default=400, help="Maximum steps per episode during evaluation"
+    )
 
     # ACT policy args
-    parser.add_argument("--chunk-size", type=int, default=20,
-                        help="Action chunk size for ACT (default: 20)")
-    parser.add_argument("--n-obs-steps", type=int, default=1,
-                        help="Number of observation steps (default: 1)")
-    parser.add_argument("--n-action-steps", type=int, default=20,
-                        help="Number of action steps to execute per chunk (default: 20)")
+    parser.add_argument(
+        "--chunk-size", type=int, default=20, help="Action chunk size for ACT (default: 20)"
+    )
+    parser.add_argument(
+        "--n-obs-steps", type=int, default=1, help="Number of observation steps (default: 1)"
+    )
+    parser.add_argument(
+        "--n-action-steps",
+        type=int,
+        default=20,
+        help="Number of action steps to execute per chunk (default: 20)",
+    )
 
     # System args
-    parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu",
-                        help="Device to use (cuda/mps/cpu)")
-    parser.add_argument("--num-workers", type=int, default=4,
-                        help="Number of dataloader workers")
-    parser.add_argument("--checkpoint-dir", type=str, default="./checkpoints",
-                        help="Directory to save checkpoints")
+    parser.add_argument(
+        "--device",
+        type=str,
+        default=(
+            "cuda"
+            if torch.cuda.is_available()
+            else "mps" if torch.backends.mps.is_available() else "cpu"
+        ),
+        help="Device to use (cuda/mps/cpu)",
+    )
+    parser.add_argument("--num-workers", type=int, default=4, help="Number of dataloader workers")
+    parser.add_argument(
+        "--checkpoint-dir", type=str, default="./checkpoints", help="Directory to save checkpoints"
+    )
 
     # Video saving args
-    parser.add_argument("--save-video", action="store_true",
-                        help="Save videos of evaluation rollouts")
-    parser.add_argument("--video-dir", type=str, default="./videos",
-                        help="Directory to save evaluation videos")
+    parser.add_argument(
+        "--save-video", action="store_true", help="Save videos of evaluation rollouts"
+    )
+    parser.add_argument(
+        "--video-dir", type=str, default="./videos", help="Directory to save evaluation videos"
+    )
 
     return parser.parse_args()
 
@@ -137,7 +162,9 @@ class RobosuiteRenderWrapper:
             camera_name=self.render_camera,
             height=self.render_size[0],
             width=self.render_size[1],
-        )[::-1]  # Flip vertically (OpenGL convention)
+        )[
+            ::-1
+        ]  # Flip vertically (OpenGL convention)
         return frame
 
     def __getattr__(self, name):
@@ -145,8 +172,14 @@ class RobosuiteRenderWrapper:
         return getattr(self.env, name)
 
 
-def create_robosuite_env(env_name, robot_name, camera_names=None, camera_height=None, camera_width=None,
-                         render_size=(240, 320)):
+def create_robosuite_env(
+    env_name,
+    robot_name,
+    camera_names=None,
+    camera_height=None,
+    camera_width=None,
+    render_size=(240, 320),
+):
     """Create a Robosuite environment for evaluation.
 
     Args:
@@ -173,7 +206,7 @@ def create_robosuite_env(env_name, robot_name, camera_names=None, camera_height=
         "has_offscreen_renderer": use_cameras,  # Enable if cameras specified
         "ignore_done": True,
         "use_camera_obs": use_cameras,  # Enable if cameras specified
-        "reward_shaping": True,
+        "reward_shaping": False,  # Use sparse task success rewards only
         "control_freq": 20,
         "hard_reset": False,
     }
@@ -198,8 +231,18 @@ def create_robosuite_env(env_name, robot_name, camera_names=None, camera_height=
     return env
 
 
-def evaluate_policy(policy, preprocessor, action_stats, env, num_episodes=10, max_steps=400, device="cpu",
-                    save_video=False, output_dir="./videos", step=None):
+def evaluate_policy(
+    policy: ACTPolicy,
+    preprocessor: Any,
+    action_stats: Dict[str, Any],
+    env: RobosuiteRenderWrapper,
+    num_episodes: int = 10,
+    max_steps: int = 400,
+    device: str = "cpu",
+    save_video: bool = False,
+    output_dir: str = "./videos",
+    step: Optional[int] = None,
+) -> Dict[str, float]:
     """
     Evaluate the policy in the environment.
 
@@ -231,7 +274,7 @@ def evaluate_policy(policy, preprocessor, action_stats, env, num_episodes=10, ma
     # Get camera names from policy config (if any)
     camera_names = []
 
-    if hasattr(policy.config, 'image_features') and policy.config.image_features:
+    if hasattr(policy.config, "image_features") and policy.config.image_features:
         # Extract camera names from image feature keys
         # e.g., "observation.images.agentview" -> "agentview"
         for img_key in policy.config.image_features:
@@ -312,9 +355,10 @@ def evaluate_policy(policy, preprocessor, action_stats, env, num_episodes=10, ma
             # Update state
             state = np.concatenate([obs[k].flatten() for k in state_keys])
 
-            # Check for task success
-            if done or info.get("success", False):
-                successes.append(float(info.get("success", False)))
+            # Check for task success (sparse reward: 1.0 = success, 0.0 = failure)
+            is_success = reward == 1.0
+            if done or is_success:
+                successes.append(float(is_success))
                 break
         else:
             # Episode ended by max_steps
@@ -419,7 +463,9 @@ def train(args):
     print()
 
     # Create pre/post processors for normalization
-    preprocessor, postprocessor = make_pre_post_processors(config, dataset_stats=dataset_metadata.stats)
+    preprocessor, postprocessor = make_pre_post_processors(
+        config, dataset_stats=dataset_metadata.stats
+    )
 
     # Setup delta timestamps for temporal data
     # ACT default: single observation step, multiple action steps
@@ -437,7 +483,9 @@ def train(args):
         if len(timestamps) <= 3:
             print(f"  {key}: {timestamps}")
         else:
-            print(f"  {key}: [{timestamps[0]}, {timestamps[1]}, ..., {timestamps[-1]}] ({len(timestamps)} steps)")
+            print(
+                f"  {key}: [{timestamps[0]}, {timestamps[1]}, ..., {timestamps[-1]}] ({len(timestamps)} steps)"
+            )
     print()
 
     # Load dataset with delta timestamps
@@ -482,7 +530,9 @@ def train(args):
                     camera_height = h
                     camera_width = w
                 elif camera_height != h or camera_width != w:
-                    print(f"WARNING: Camera {cam_name} has different resolution ({h}x{w}) than expected ({camera_height}x{camera_width})")
+                    print(
+                        f"WARNING: Camera {cam_name} has different resolution ({h}x{w}) than expected ({camera_height}x{camera_width})"
+                    )
 
     if camera_names:
         print(f"Detected camera features from dataset: {camera_names}")
@@ -497,7 +547,7 @@ def train(args):
         args.robot,
         camera_names=camera_names if camera_names else None,
         camera_height=camera_height,
-        camera_width=camera_width
+        camera_width=camera_width,
     )
     print(f"✓ Evaluation environment created")
     print()
