@@ -10,7 +10,7 @@ This means the robot maintains its commanded position even when holding objects 
 external forces, preventing drift and drooping that occurs with regular delta control.
 
 Usage:
-    python -m sir.teleoperation.spacemouse_teleop -e PegInsertionSide-v1
+    python -m sir.teleoperation.maniskill_teleop -e PegInsertionSide-v1
 
 Controls:
     - SpaceMouse translation: Move robot end-effector in XYZ
@@ -29,8 +29,7 @@ import mani_skill.envs  # Register ManiSkill environments
 from pathlib import Path
 from datetime import datetime
 
-from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.common.datasets.push_dataset_to_hub.utils import concatenate_episodes
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
 from .utils import apply_deadzone, parse_axis_mapping, KeyboardListener
 from .robot_config import create_custom_panda
@@ -39,76 +38,74 @@ from .robot_config import create_custom_panda
 def parse_args():
     parser = argparse.ArgumentParser(description="SpaceMouse teleoperation for ManiSkill")
     parser.add_argument(
-        "-e", "--env-id",
+        "-e",
+        "--env-id",
         type=str,
         default="PegInsertionSide-v1",
-        help="Environment ID (e.g., PegInsertionSide-v1, PickCube-v1, StackCube-v1)"
+        help="Environment ID (e.g., PegInsertionSide-v1, PickCube-v1, StackCube-v1)",
     )
     parser.add_argument(
         "--control-mode",
         type=str,
         default="pd_ee_target_delta_pose",
-        help="Control mode for the robot. Options: pd_ee_target_delta_pose, pd_ee_delta_pose, pd_ee_target_delta_pos, pd_ee_delta_pos"
+        help="Control mode for the robot. Options: pd_ee_target_delta_pose, pd_ee_delta_pose, pd_ee_target_delta_pos, pd_ee_delta_pos",
     )
     parser.add_argument(
-        "--robot-uid",
-        type=str,
-        default="panda",
-        help="Robot to use (default: panda)"
+        "--robot-uid", type=str, default="panda", help="Robot to use (default: panda)"
     )
     parser.add_argument(
         "--max-episode-steps",
         type=int,
         default=10000,
-        help="Maximum steps per episode (default: 10000, set to 0 for unlimited)"
+        help="Maximum steps per episode (default: 10000, set to 0 for unlimited)",
     )
     parser.add_argument(
         "--speed",
         type=float,
         default=0.15,
-        help="Speed multiplier for SpaceMouse control (default: 0.15)"
+        help="Speed multiplier for SpaceMouse control (default: 0.15)",
     )
     parser.add_argument(
         "--rot-speed",
         type=float,
         default=0.3,
-        help="Rotation speed multiplier for SpaceMouse control (default: 0.3)"
+        help="Rotation speed multiplier for SpaceMouse control (default: 0.3)",
     )
     parser.add_argument(
         "--stiffness",
         type=float,
         default=2000.0,
-        help="PD controller stiffness (default: 2000.0, higher = more responsive)"
+        help="PD controller stiffness (default: 2000.0, higher = more responsive)",
     )
     parser.add_argument(
         "--damping",
         type=float,
         default=200.0,
-        help="PD controller damping (default: 200.0, higher = less oscillation)"
+        help="PD controller damping (default: 200.0, higher = less oscillation)",
     )
     parser.add_argument(
         "--force-limit",
         type=float,
         default=200.0,
-        help="Maximum force for PD controller (default: 200.0)"
+        help="Maximum force for PD controller (default: 200.0)",
     )
     parser.add_argument(
         "--deadzone",
         type=float,
         default=0.02,
-        help="SpaceMouse deadzone threshold (default: 0.02, values below this are ignored)"
+        help="SpaceMouse deadzone threshold (default: 0.02, values below this are ignored)",
     )
     parser.add_argument(
         "--axis-mapping",
         type=str,
         default="-yxz",
-        help="SpaceMouse axis mapping to robot frame (default: -yxz). Use permutation like 'yxz' or '-x-yz' to remap axes"
+        help="SpaceMouse axis mapping to robot frame (default: -yxz). Use permutation like 'yxz' or '-x-yz' to remap axes",
     )
     parser.add_argument(
         "--rot-axis-mapping",
         type=str,
         default="-x-yz",
-        help="SpaceMouse rotation axis mapping (default: -x-yz). Use permutation like 'yxz' or '-x-yz' to remap rotation axes"
+        help="SpaceMouse rotation axis mapping (default: -x-yz). Use permutation like 'yxz' or '-x-yz' to remap rotation axes",
     )
     parser.add_argument(
         "--no-record-gripper-motion",
@@ -123,21 +120,16 @@ def parse_args():
         help="Velocity threshold below which gripper is considered stopped (default: 0.01)",
     )
     parser.add_argument(
-        "--save-data",
-        action="store_true",
-        help="Save teleoperation data to LeRobotDataset"
+        "--save-data", action="store_true", help="Save teleoperation data to LeRobotDataset"
     )
     parser.add_argument(
-        "--dataset-path",
-        type=str,
-        default="./data",
-        help="Path to save dataset (default: ./data)"
+        "--dataset-path", type=str, default="./data", help="Path to save dataset (default: ./data)"
     )
     parser.add_argument(
         "--dataset-name",
         type=str,
         default=None,
-        help="Name of the dataset. If not specified, will be generated as {env_id}_{timestamp}"
+        help="Name of the dataset. If not specified, will be generated as {env_id}_{timestamp}",
     )
     return parser.parse_args()
 
@@ -153,7 +145,9 @@ def main():
     print(f"Robot: {args.robot_uid}")
     print(f"Translation speed: {args.speed}")
     print(f"Rotation speed: {args.rot_speed}")
-    print(f"PD Controller: stiffness={args.stiffness}, damping={args.damping}, force_limit={args.force_limit}")
+    print(
+        f"PD Controller: stiffness={args.stiffness}, damping={args.damping}, force_limit={args.force_limit}"
+    )
     print(f"Deadzone: {args.deadzone}")
     print(f"Axis mapping: {args.axis_mapping} (translation), {args.rot_axis_mapping} (rotation)")
 
@@ -284,7 +278,7 @@ def main():
     try:
         while True:
             # Render the SAPIEN viewer (must be called every iteration)
-            env.render_human()
+            env.unwrapped.render_human()
 
             # Read SpaceMouse state
             state = pyspacemouse.read()
@@ -304,23 +298,29 @@ def main():
             # Build action from SpaceMouse input
             if "pose" in args.control_mode:
                 # 6-DOF control: translation (xyz) + rotation (rpy)
-                action = np.array([
-                    x * args.speed,      # x translation
-                    y * args.speed,      # y translation
-                    z * args.speed,      # z translation
-                    roll * args.rot_speed,   # roll rotation
-                    pitch * args.rot_speed,  # pitch rotation
-                    yaw * args.rot_speed,    # yaw rotation
-                    1.0 if gripper_open else -1.0  # gripper (1=open, -1=close)
-                ], dtype=np.float32)
+                action = np.array(
+                    [
+                        x * args.speed,  # x translation
+                        y * args.speed,  # y translation
+                        z * args.speed,  # z translation
+                        roll * args.rot_speed,  # roll rotation
+                        pitch * args.rot_speed,  # pitch rotation
+                        yaw * args.rot_speed,  # yaw rotation
+                        1.0 if gripper_open else -1.0,  # gripper (1=open, -1=close)
+                    ],
+                    dtype=np.float32,
+                )
             elif "pos" in args.control_mode:
                 # 3-DOF control: translation only (xyz)
-                action = np.array([
-                    x * args.speed,      # x translation
-                    y * args.speed,      # y translation
-                    z * args.speed,      # z translation
-                    1.0 if gripper_open else -1.0  # gripper
-                ], dtype=np.float32)
+                action = np.array(
+                    [
+                        x * args.speed,  # x translation
+                        y * args.speed,  # y translation
+                        z * args.speed,  # z translation
+                        1.0 if gripper_open else -1.0,  # gripper
+                    ],
+                    dtype=np.float32,
+                )
             else:
                 # Fallback: zero action
                 action = np.zeros(action_dim, dtype=np.float32)
@@ -344,7 +344,7 @@ def main():
             should_reset = False
             episode_success = None
 
-            if key == '1':
+            if key == "1":
                 print()
                 print("=" * 60)
                 print("SUCCESS! Resetting environment...")
@@ -352,7 +352,7 @@ def main():
                 print()
                 should_reset = True
                 episode_success = True
-            elif key == '0':
+            elif key == "0":
                 print()
                 print("=" * 60)
                 print("FAILURE! Resetting environment...")
@@ -386,14 +386,14 @@ def main():
                                 "observation.state": {
                                     "dtype": "float32",
                                     "shape": (obs.shape[0],),
-                                    "names": ["state_dim_" + str(i) for i in range(obs.shape[0])]
+                                    "names": ["state_dim_" + str(i) for i in range(obs.shape[0])],
                                 },
                                 "action": {
                                     "dtype": "float32",
                                     "shape": (action_dim,),
-                                    "names": ["action_dim_" + str(i) for i in range(action_dim)]
-                                }
-                            }
+                                    "names": ["action_dim_" + str(i) for i in range(action_dim)],
+                                },
+                            },
                         )
                         print(f"✓ Dataset created at {dataset_path}")
 
@@ -403,7 +403,9 @@ def main():
                     "size": num_frames,
                     "task": [args.env_id] * num_frames,  # Task name for each frame
                     "episode_index": saved_episode_count,
-                    "observation.state": [obs.astype(np.float32) for obs in episode_buffer["observations"]],
+                    "observation.state": [
+                        obs.astype(np.float32) for obs in episode_buffer["observations"]
+                    ],
                     "action": [act.astype(np.float32) for act in episode_buffer["actions"]],
                     "next.done": [bool(d) for d in episode_buffer["dones"]],
                     "next.reward": [float(r) for r in episode_buffer["rewards"]],
@@ -443,9 +445,9 @@ def main():
                 # For ManiSkill, access gripper qvel from the robot
                 # ManiSkill Panda has two gripper joints: panda_finger_joint1, panda_finger_joint2
                 robot = env.unwrapped.agent.robot
-                gripper_joints = [j for j in robot.get_active_joints() if 'finger' in j.name]
+                gripper_joints = [j for j in robot.get_active_joints() if "finger" in j.name]
                 # Get actual joint velocities (not target velocities)
-                gripper_qvel = np.array([j.get_qvel() for j in gripper_joints])
+                gripper_qvel = np.array([j.qvel for j in gripper_joints])
                 max_qvel = np.max(np.abs(gripper_qvel))
                 if max_qvel < args.gripper_vel_threshold:
                     gripper_is_moving = False
