@@ -51,7 +51,7 @@ Controls:
     - '0' key: Discard correction (no save)
 
     Between episodes:
-    - ENTER: Start next episode
+    - 'n' key: Start next episode
     - Ctrl+C: Quit
 """
 
@@ -911,9 +911,13 @@ def main():
             print(f"  Total episodes in dataset: {dataset.num_episodes if dataset else 0}")
             print()
 
-            # Wait for confirmation before next episode
-            print("Press ENTER to start next episode, or Ctrl+C to quit...")
-            input()
+            # Wait for confirmation before next episode using keyboard listener
+            print("Press 'n' to start NEXT episode, or Ctrl+C to quit...")
+            while True:
+                key = kbd_listener.read_key()
+                if key == "n":
+                    break
+                time.sleep(0.1)  # Small delay to avoid busy waiting
 
     except KeyboardInterrupt:
         print("\n\nShutting down...")
