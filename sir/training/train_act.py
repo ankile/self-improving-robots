@@ -3,20 +3,29 @@
 Simple training script for ACT (Action Chunking Transformer) policy using LeRobot.
 
 This script:
-1. Loads a LeRobotDataset from local storage
-2. Creates an ACT policy
-3. Trains with supervised behavioral cloning (BC) loss
-4. Evaluates in the environment at regular intervals
+1. Loads one or more LeRobotDatasets from local storage
+2. Automatically filters DAgger datasets to include only successful human corrections
+3. Combines multiple datasets on-the-fly for training
+4. Creates an ACT policy
+5. Trains with supervised behavioral cloning (BC) loss
+6. Evaluates in the environment at regular intervals
 
-Usage:
+Usage (single dataset from HuggingFace Hub):
     python -m sir.training.train_act \
-        --repo-id lift_minimal_state \
-        --root ./data/test_filtered
+        --repo-ids ankile/square-v1
+
+Usage (multiple datasets - BC + DAgger from HuggingFace Hub):
+    python -m sir.training.train_act \
+        --repo-ids "ankile/square-v1,ankile/square-dagger-v1"
+
+Usage (with local datasets):
+    python -m sir.training.train_act \
+        --repo-ids "ankile/square-v1,ankile/square-dagger-v1" \
+        --root ./data
 
 Example with custom parameters:
     python -m sir.training.train_act \
-        --repo-id lift_minimal_state \
-        --root ./data/test_filtered \
+        --repo-ids "ankile/square-v1,ankile/square-dagger-v1" \
         --batch-size 32 \
         --lr 1e-5 \
         --training-steps 20000 \
@@ -24,22 +33,19 @@ Example with custom parameters:
 
 Example with Weights & Biases logging and video saving:
     python -m sir.training.train_act \
-        --repo-id lift_minimal_state \
-        --root ./data/test_filtered \
+        --repo-ids "ankile/square-v1,ankile/square-dagger-v1" \
         --use-wandb \
-        --wandb-project my-act-project \
-        --wandb-run-name lift_experiment_1 \
+        --wandb-project act-dagger-training \
+        --wandb-run-name square_bc_plus_dagger_v1 \
         --save-video
 
-Example with different environment:
-    python -m sir.training.train_act \
-        --repo-id stack_cube_demos \
-        --root ./data \
-        --env StackCube \
-        --robot Sawyer
-
-Note: Camera observations are automatically detected from the dataset/policy.
-      The script will configure the evaluation environment to match.
+Note:
+- Datasets are automatically downloaded from HuggingFace Hub if --root is not specified.
+- Camera observations are automatically detected from the dataset/policy.
+  The script will configure the evaluation environment to match.
+- DAgger datasets (with 'source' and 'success' columns) are automatically filtered
+  to include only successful human corrections (source=1, success=1).
+- All dataset metadata (repo IDs, episodes, commit hashes) is logged to W&B.
 """
 
 import argparse
@@ -51,31 +57,37 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 # Suppress Pydantic warnings from library code (robosuite/lerobot dependencies)
-warnings.filterwarnings("ignore", category=UserWarning, module="pydantic._internal._generate_schema")
+warnings.filterwarnings(
+    "ignore", category=UserWarning, module="pydantic._internal._generate_schema"
+)
 
 import imageio
 import numpy as np
-import torch
-import wandb
-from torch.utils.data import DataLoader
-from tqdm import tqdm
-
-# LeRobot imports
-from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
-from lerobot.datasets.utils import dataset_to_policy_features
-from lerobot.policies.act.modeling_act import ACTPolicy
-from lerobot.policies.act.configuration_act import ACTConfig
-from lerobot.policies.factory import make_pre_post_processors
-from lerobot.configs.types import FeatureType
 
 # Robosuite imports
 import robosuite as suite
+import robosuite.macros as macros
+import torch
+import wandb
+from lerobot.configs.types import FeatureType
+
+# LeRobot imports
+from lerobot.datasets.lerobot_dataset import (
+    LeRobotDataset,
+    LeRobotDatasetMetadata,
+    MultiLeRobotDataset,
+)
+from lerobot.datasets.utils import dataset_to_policy_features
+from lerobot.policies.act.configuration_act import ACTConfig
+from lerobot.policies.act.modeling_act import ACTPolicy
+from lerobot.policies.factory import make_pre_post_processors
 from robosuite import load_composite_controller_config
 from robosuite.wrappers import VisualizationWrapper
-import robosuite.macros as macros
+from torch.utils.data import DataLoader
+from tqdm import tqdm
 
 # SIR training utilities
-from sir.training.wandb_artifacts import upload_checkpoint_to_wandb, create_artifact_metadata
+from sir.training.wandb_artifacts import create_artifact_metadata, upload_checkpoint_to_wandb
 
 # Set image convention to OpenCV (must be before env creation)
 macros.IMAGE_CONVENTION = "opencv"
@@ -89,13 +101,24 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Train ACT policy with LeRobot")
 
     # Dataset args
-    parser.add_argument("--repo-id", type=str, required=True, help="Dataset repo ID (name)")
     parser.add_argument(
-        "--root", type=str, default="./data", help="Root directory containing datasets"
+        "--repo-ids",
+        type=str,
+        required=True,
+        help="Comma-separated list of dataset repo IDs (e.g., 'ankile/square-v1,ankile/square-dagger-v1'). "
+        "DAgger datasets (with 'source' and 'success' columns) will be automatically filtered to include only successful human corrections.",
+    )
+    parser.add_argument(
+        "--root",
+        type=str,
+        default=None,
+        help="Root directory containing datasets. If not specified, downloads from HuggingFace Hub to default cache directory.",
     )
 
     # Environment args
-    parser.add_argument("--env", type=str, default="Lift", help="Robosuite environment name (default: Lift)")
+    parser.add_argument(
+        "--env", type=str, default="Lift", help="Robosuite environment name (default: Lift)"
+    )
     parser.add_argument("--robot", type=str, default="Panda", help="Robot name (default: Panda)")
 
     # Training args
@@ -106,7 +129,7 @@ def parse_args():
     parser.add_argument(
         "--training-steps",
         type=int,
-        default=10000,
+        default=10_000,
         help="Number of training steps (default: 10000)",
     )
     parser.add_argument(
@@ -166,9 +189,7 @@ def parse_args():
     )
 
     # Wandb args
-    parser.add_argument(
-        "--use-wandb", action="store_true", help="Enable Weights & Biases logging"
-    )
+    parser.add_argument("--use-wandb", action="store_true", help="Enable Weights & Biases logging")
     parser.add_argument(
         "--wandb-project", type=str, default="act-training", help="Wandb project name"
     )
@@ -453,13 +474,95 @@ def evaluate_policy(
     return metrics, video_path
 
 
+def filter_dagger_episodes(repo_id: str, root: Path | None) -> list[int] | None:
+    """
+    Filter a DAgger dataset to include only successful human corrections.
+
+    Returns a list of episode indices where source=1 (human) AND success=1 (successful),
+    or None if this is not a DAgger dataset (no 'source' or 'success' columns).
+
+    Args:
+        repo_id: Dataset repository ID
+        root: Root directory containing datasets
+
+    Returns:
+        List of episode indices to include, or None if not a DAgger dataset
+    """
+    # Load temporary dataset to check features
+    temp_dataset = LeRobotDataset(repo_id, root=root)
+
+    # Check if this is a DAgger dataset (has 'source' and 'success' columns)
+    has_source = "source" in temp_dataset.features
+    has_success = "success" in temp_dataset.features
+
+    if not (has_source and has_success):
+        # Not a DAgger dataset, use all episodes
+        print(f"  Dataset '{repo_id}' is not a DAgger dataset (no source/success columns)")
+        print(f"  Using all {temp_dataset.meta.total_episodes} episodes")
+        return None
+
+    print(
+        f"  Dataset '{repo_id}' is a DAgger dataset, filtering for successful human corrections..."
+    )
+
+    # Iterate through episodes and filter
+    successful_human_episodes = []
+
+    for ep_idx in range(temp_dataset.meta.total_episodes):
+        # Get episode data
+        ep_data = temp_dataset.meta.episodes[ep_idx]
+        from_idx = ep_data["dataset_from_index"]
+
+        # Sample one frame from this episode to check source and success
+        # (all frames in an episode should have the same source and success)
+        frame = temp_dataset.hf_dataset[int(from_idx)]
+
+        # Handle both scalar tensors and arrays
+        source_val = frame["source"]
+        success_val = frame["success"]
+
+        # Convert to int - handle both tensor scalars and arrays
+        if hasattr(source_val, "item"):
+            source = int(source_val.item())
+        elif hasattr(source_val, "__getitem__"):
+            source = int(source_val[0])
+        else:
+            source = int(source_val)
+
+        if hasattr(success_val, "item"):
+            success = int(success_val.item())
+        elif hasattr(success_val, "__getitem__"):
+            success = int(success_val[0])
+        else:
+            success = int(success_val)
+
+        # Keep only successful human corrections (source=1: human, success=1: successful)
+        if source == 1 and success == 1:
+            successful_human_episodes.append(ep_idx)
+
+    print(
+        f"  Filtered {temp_dataset.meta.total_episodes} episodes → {len(successful_human_episodes)} successful human corrections"
+    )
+
+    if len(successful_human_episodes) == 0:
+        raise ValueError(
+            f"DAgger dataset '{repo_id}' has no successful human corrections! "
+            "Please collect some successful human demonstrations before training."
+        )
+
+    return successful_human_episodes
+
+
 def train(args):
     """Main training loop."""
+    # Parse comma-separated repo IDs
+    repo_ids = [rid.strip() for rid in args.repo_ids.split(",")]
+
     print("=" * 60)
     print("Training ACT Policy with LeRobot")
     print("=" * 60)
-    print(f"Dataset: {args.repo_id}")
-    print(f"Root: {args.root}")
+    print(f"Datasets: {', '.join(repo_ids)}")
+    print(f"Root: {args.root if args.root else 'HuggingFace Hub (default cache)'}")
     print(f"Environment: {args.env} ({args.robot})")
     print(f"Device: {args.device}")
     print(f"Batch size: {args.batch_size}")
@@ -469,46 +572,79 @@ def train(args):
     print("=" * 60)
     print()
 
-    # Initialize Weights & Biases
-    if args.use_wandb:
-        wandb.init(
-            project=args.wandb_project,
-            entity=args.wandb_entity,
-            name=args.wandb_run_name,
-            config={
-                # Dataset config
-                "dataset/repo_id": args.repo_id,
-                "dataset/root": args.root,
-                # Environment config
-                "environment/env_name": args.env,
-                "environment/robot": args.robot,
-                # Training config
-                "training/batch_size": args.batch_size,
-                "training/lr": args.lr,
-                "training/training_steps": args.training_steps,
-                "training/eval_freq": args.eval_freq,
-                "training/eval_episodes": args.eval_episodes,
-                "training/max_steps": args.max_steps,
-                # Policy config
-                "policy/chunk_size": args.chunk_size,
-                "policy/n_obs_steps": args.n_obs_steps,
-                "policy/n_action_steps": args.n_action_steps,
-                # System config
-                "system/device": args.device,
-                "system/num_workers": args.num_workers,
-                "system/checkpoint_dir": args.checkpoint_dir,
-            },
+    # Filter datasets for successful human corrections
+    print("Filtering datasets...")
+    episodes_dict = {}
+    dataset_info = {}  # Track dataset metadata for W&B logging
+
+    for repo_id in repo_ids:
+        print(f"Processing dataset: {repo_id}")
+        filtered_episodes = filter_dagger_episodes(repo_id, root=args.root)
+        # Store episodes for ALL datasets (None means use all episodes)
+        episodes_dict[repo_id] = filtered_episodes
+
+        # Collect metadata for logging
+        temp_meta = LeRobotDatasetMetadata(repo_id, root=args.root)
+        num_episodes = (
+            len(filtered_episodes) if filtered_episodes is not None else temp_meta.total_episodes
         )
-        print(f"✓ Initialized Weights & Biases (project: {args.wandb_project})")
+        dataset_info[repo_id] = {
+            "total_episodes": temp_meta.total_episodes,
+            "used_episodes": num_episodes,
+            "total_frames": temp_meta.total_frames,
+            "revision": temp_meta.revision,
+        }
         print()
 
-    # Load dataset metadata first to get features and stats
+    # Initialize Weights & Biases with dataset metadata
+    config = {
+        # Dataset config
+        "dataset/repo_ids": repo_ids,
+        "dataset/root": args.root,
+        # Environment config
+        "environment/env_name": args.env,
+        "environment/robot": args.robot,
+        # Training config
+        "training/batch_size": args.batch_size,
+        "training/lr": args.lr,
+        "training/training_steps": args.training_steps,
+        "training/eval_freq": args.eval_freq,
+        "training/eval_episodes": args.eval_episodes,
+        "training/max_steps": args.max_steps,
+        # Policy config
+        "policy/chunk_size": args.chunk_size,
+        "policy/n_obs_steps": args.n_obs_steps,
+        "policy/n_action_steps": args.n_action_steps,
+        # System config
+        "system/device": args.device,
+        "system/num_workers": args.num_workers,
+        "system/checkpoint_dir": args.checkpoint_dir,
+    }
+
+    # Add dataset-specific metadata
+    for repo_id, info in dataset_info.items():
+        safe_name = repo_id.replace("/", "_")
+        config[f"dataset/{safe_name}/total_episodes"] = info["total_episodes"]
+        config[f"dataset/{safe_name}/used_episodes"] = info["used_episodes"]
+        config[f"dataset/{safe_name}/total_frames"] = info["total_frames"]
+        config[f"dataset/{safe_name}/revision"] = info["revision"]
+
+    wandb.init(
+        project=args.wandb_project,
+        entity=args.wandb_entity,
+        name=args.wandb_run_name,
+        config=config,
+        mode="online" if args.use_wandb else "disabled",
+    )
+    print(f"✓ Initialized Weights & Biases (project: {args.wandb_project})")
+    print()
+
+    # Load dataset metadata first to get features and stats (from first dataset)
     print("Loading dataset metadata...")
-    dataset_metadata = LeRobotDatasetMetadata(args.repo_id, root=args.root)
+    primary_repo_id = repo_ids[0]
+    dataset_metadata = LeRobotDatasetMetadata(primary_repo_id, root=args.root)
     fps = dataset_metadata.fps
     print(f"✓ Dataset metadata loaded")
-    print(f"  Total episodes: {dataset_metadata.total_episodes}")
-    print(f"  Total frames: {dataset_metadata.total_frames}")
     print(f"  FPS: {fps}")
     print()
 
@@ -571,14 +707,18 @@ def train(args):
             )
     print()
 
-    # Load dataset with delta timestamps
-    print("Loading dataset...")
-    dataset = LeRobotDataset(
-        args.repo_id,
+    # Load dataset(s) with delta timestamps
+    print("Loading dataset(s)...")
+    dataset = MultiLeRobotDataset(
+        repo_ids=repo_ids,
         root=args.root,
         delta_timestamps=delta_timestamps,
+        episodes=episodes_dict,  # Dict with entry for each repo_id (None = use all)
     )
-    print(f"✓ Dataset loaded: {len(dataset)} frames")
+    print("✓ Datasets loaded:")
+    for repo_id, info in dataset_info.items():
+        print(f"  {repo_id}: {info['used_episodes']} episodes (of {info['total_episodes']} total)")
+    print(f"  Total frames: {len(dataset)}")
     print()
 
     # Create dataloader
@@ -592,7 +732,7 @@ def train(args):
     )
 
     # Create optimizer (use policy's get_optim_params for proper param groups)
-    optimizer = torch.optim.Adam(policy.get_optim_params(), lr=args.lr)
+    optimizer = torch.optim.AdamW(policy.get_optim_params(), lr=args.lr)
 
     # Detect camera names and resolution from dataset features
     camera_names = []
@@ -633,11 +773,13 @@ def train(args):
         camera_width=camera_width,
         visual_aids=args.visual_aids,
     )
-    print(f"✓ Evaluation environment created")
+    print("✓ Evaluation environment created")
     print()
 
     # Create checkpoint directory
-    checkpoint_dir = Path(args.checkpoint_dir) / args.repo_id
+    # Use combined dataset name for checkpoint directory
+    combined_name = "+".join([rid.split("/")[-1] for rid in repo_ids])
+    checkpoint_dir = Path(args.checkpoint_dir) / combined_name
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     print(f"Checkpoints will be saved to: {checkpoint_dir}")
     print()
@@ -755,18 +897,26 @@ def train(args):
                     # Upload to W&B for version control and DAgger preparation
                     if args.use_wandb:
                         metadata = create_artifact_metadata(
-                            repo_id=args.repo_id,
+                            repo_id=combined_name,
                             success_rate=best_success_rate / 100.0,
                             avg_reward=metrics["avg_reward"],
                             step=step,
                             is_best=True,
                             dataset_size=len(dataset),
                         )
-                        artifact_name = f"act-{args.repo_id}-best-step-{step}"
+                        # Add detailed dataset info to metadata
+                        for i, repo_id in enumerate(repo_ids):
+                            metadata[f"dataset_{i}_repo_id"] = repo_id
+                            metadata[f"dataset_{i}_episodes"] = dataset_info[repo_id][
+                                "used_episodes"
+                            ]
+                            metadata[f"dataset_{i}_revision"] = dataset_info[repo_id]["revision"]
+
+                        artifact_name = f"act-{combined_name}-best-step-{step}"
                         upload_checkpoint_to_wandb(
                             checkpoint_path=checkpoint_path,
                             artifact_name=artifact_name,
-                            description=f"Best ACT policy (success: {best_success_rate:.1f}%, step: {step})",
+                            description=f"Best ACT policy trained on {', '.join(repo_ids)} (success: {best_success_rate:.1f}%, step: {step})",
                             metadata=metadata,
                         )
                     print()
@@ -781,12 +931,23 @@ def train(args):
 
                 # Upload to W&B for version control
                 if args.use_wandb:
-                    artifact_name = f"act-{args.repo_id}-checkpoint-step-{step}"
+                    artifact_name = f"act-{combined_name}-checkpoint-step-{step}"
+                    checkpoint_metadata = {"step": step, "combined_name": combined_name}
+                    # Add dataset info
+                    for i, repo_id in enumerate(repo_ids):
+                        checkpoint_metadata[f"dataset_{i}_repo_id"] = repo_id
+                        checkpoint_metadata[f"dataset_{i}_episodes"] = dataset_info[repo_id][
+                            "used_episodes"
+                        ]
+                        checkpoint_metadata[f"dataset_{i}_revision"] = dataset_info[repo_id][
+                            "revision"
+                        ]
+
                     upload_checkpoint_to_wandb(
                         checkpoint_path=checkpoint_path,
                         artifact_name=artifact_name,
                         description=f"ACT policy checkpoint at step {step}",
-                        metadata={"step": step, "repo_id": args.repo_id},
+                        metadata=checkpoint_metadata,
                     )
                 print()
 
@@ -812,7 +973,7 @@ def train(args):
         step=None,  # Final eval (no step number)
     )
 
-    print(f"\nFinal Evaluation Results:")
+    print("\nFinal Evaluation Results:")
     print(f"  Success Rate: {metrics['success_rate']:.1f}%")
     print(f"  Avg Reward: {metrics['avg_reward']:.3f}")
     print(f"  Avg Length: {metrics['avg_length']:.1f}")
@@ -844,18 +1005,24 @@ def train(args):
     # Upload final model to W&B
     if args.use_wandb:
         metadata = create_artifact_metadata(
-            repo_id=args.repo_id,
+            repo_id=combined_name,
             success_rate=metrics["success_rate"] / 100.0,
             avg_reward=metrics["avg_reward"],
             step=step,
             is_best=False,
             dataset_size=len(dataset),
         )
-        artifact_name = f"act-{args.repo_id}-final"
+        # Add detailed dataset info to metadata
+        for i, repo_id in enumerate(repo_ids):
+            metadata[f"dataset_{i}_repo_id"] = repo_id
+            metadata[f"dataset_{i}_episodes"] = dataset_info[repo_id]["used_episodes"]
+            metadata[f"dataset_{i}_revision"] = dataset_info[repo_id]["revision"]
+
+        artifact_name = f"act-{combined_name}-final"
         upload_checkpoint_to_wandb(
             checkpoint_path=checkpoint_path,
             artifact_name=artifact_name,
-            description=f"Final ACT policy after {step} steps (success: {metrics['success_rate']:.1f}%)",
+            description=f"Final ACT policy trained on {', '.join(repo_ids)} after {step} steps (success: {metrics['success_rate']:.1f}%)",
             metadata=metadata,
         )
 
