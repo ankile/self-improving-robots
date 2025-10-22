@@ -21,6 +21,11 @@ Usage:
     mjpython -m sir.teleoperation.robosuite_teleop --env Lift --robot Panda \
         --save-data --cameras "agentview"
 
+    # Auto-save on task success (no need to press '1')
+    mjpython -m sir.teleoperation.robosuite_teleop --env NutAssemblySquare --robot Panda \
+        --save-data --cameras "agentview,robot0_eye_in_hand" \
+        --auto-save-on-success
+
     # Linux
     python -m sir.teleoperation.robosuite_teleop --env Lift --robot Panda
 
@@ -37,6 +42,7 @@ Controls:
 Data Collection:
     - Use --save-data flag to enable saving to LeRobot dataset
     - Press '1' to save successful episodes, '0' to discard failures
+    - Use --auto-save-on-success to automatically save when task success is detected
     - Dataset includes robot state, actions, rewards, and camera images
     - Compatible with HuggingFace LeRobot for training
 """
@@ -113,6 +119,7 @@ def teleop_episode(
     camera_names=None,
     record_gripper_motion=True,
     gripper_vel_threshold=0.01,
+    auto_save_on_success=False,
 ):
     """
     Teleoperate a single episode.
@@ -129,6 +136,7 @@ def teleop_episode(
         camera_names (list): List of camera names for observations
         record_gripper_motion (bool): Whether to record noop actions while gripper is moving
         gripper_vel_threshold (float): Velocity threshold to detect when gripper has stopped
+        auto_save_on_success (bool): Automatically save and end episode when task success is detected
 
     Returns:
         tuple: (episode_data, episode_success) where:
@@ -164,7 +172,11 @@ def teleop_episode(
     # there's actual control input.
 
     print("\nEpisode started. Use SpaceMouse to control the robot.")
-    print("Press '1' for SUCCESS and save, '0' for FAILURE (no save), Ctrl+C to quit.")
+    if auto_save_on_success:
+        print("Auto-save ENABLED: Episode will save automatically when task success is detected")
+        print("Press '0' for FAILURE (no save), Ctrl+C to quit.")
+    else:
+        print("Press '1' for SUCCESS and save, '0' for FAILURE (no save), Ctrl+C to quit.")
     print("Note: Only recording timesteps with active spacemouse input (no idle frames)")
     print(f"Observation keys: {list(obs.keys())}")
 
@@ -182,6 +194,7 @@ def teleop_episode(
     prev_gripper = device.control_gripper  # Track gripper state for change detection
     gripper_is_moving = False  # Track if gripper is currently opening/closing
     target_gripper_state = prev_gripper  # The gripper state we're waiting to reach
+    success_announced = False  # Track if we've announced task success
 
     while True:
         start = time.time()
@@ -212,9 +225,9 @@ def teleop_episode(
         control = device.control
         gripper = device.control_gripper
 
-        # Scale controls (base 0.005 scaling factor)
-        dpos = control[:3] * 0.005 * device.pos_sensitivity
-        raw_drot = control[3:6] * 0.005 * device.rot_sensitivity  # [roll, pitch, yaw]
+        # Scale controls (base 0.0055 scaling factor - 10% more sensitive than default 0.005)
+        dpos = control[:3] * 0.0055 * device.pos_sensitivity
+        raw_drot = control[3:6] * 0.0055 * device.rot_sensitivity  # [roll, pitch, yaw]
 
         # Apply coordinate frame transformation (from Device.input2action)
         # Robot expects [pitch, roll, -yaw] not [roll, pitch, yaw]
@@ -244,6 +257,26 @@ def teleop_episode(
         obs, reward, done, info = env.step(action)
         if has_renderer:
             env.render()
+
+        # Check for task success and announce once
+        if not success_announced and hasattr(env, '_check_success'):
+            task_success = env._check_success()
+            if task_success:
+                success_announced = True
+                print()
+                print("*" * 60)
+                print("TASK SUCCESSFUL! Environment detected task completion!")
+                print("*" * 60)
+                print()
+
+                # Automatically save and end episode if enabled
+                if auto_save_on_success:
+                    print("Auto-save enabled - saving episode as SUCCESS")
+                    print("=" * 60)
+                    print(f"SUCCESS! Episode length: {step_count} steps")
+                    print("=" * 60)
+                    print()
+                    return (episode_data, True)
 
         # Check gripper velocity to see if motion is complete
         if gripper_is_moving and record_gripper_motion:
@@ -490,6 +523,11 @@ def main():
         default=None,
         help="Name of the dataset. If not specified, will be generated as {env}_{robot}_{timestamp}",
     )
+    parser.add_argument(
+        "--auto-save-on-success",
+        action="store_true",
+        help="Automatically save episode as SUCCESS when task completion is detected by environment (no need to press '1')",
+    )
     args = parser.parse_args()
 
     # Check if LeRobotDataset is available when saving data
@@ -577,6 +615,10 @@ def main():
         print(f"\nData saving: ENABLED")
         print(f"Dataset path: {dataset_path}")
         print(f"Dataset name: {dataset_name}")
+        if args.auto_save_on_success:
+            print(f"Auto-save on success: ENABLED (episodes save automatically when task succeeds)")
+        else:
+            print(f"Auto-save on success: DISABLED (press '1' to save)")
     else:
         print(f"\nData saving: DISABLED")
 
@@ -612,6 +654,7 @@ def main():
                 camera_names=camera_names,
                 record_gripper_motion=args.record_gripper_motion,
                 gripper_vel_threshold=args.gripper_vel_threshold,
+                auto_save_on_success=args.auto_save_on_success,
             )
 
             # If None returned, user requested reset - continue to next episode
