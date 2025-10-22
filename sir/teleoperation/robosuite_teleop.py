@@ -667,7 +667,7 @@ def main():
                             if cam_key in episode_data:
                                 img_shape = episode_data[cam_key][0].shape
                                 features[f"observation.images.{cam_name}"] = {
-                                    "dtype": "image",  # Use "image" not "uint8"
+                                    "dtype": "video",  # Use "video" to encode as MP4 files, not "image" which embeds in Parquet
                                     "shape": img_shape,
                                     "names": ["height", "width", "channels"],
                                 }

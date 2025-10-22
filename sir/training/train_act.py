@@ -74,6 +74,9 @@ from robosuite import load_composite_controller_config
 from robosuite.wrappers import VisualizationWrapper
 import robosuite.macros as macros
 
+# SIR training utilities
+from sir.training.wandb_artifacts import upload_checkpoint_to_wandb, create_artifact_metadata
+
 # Set image convention to OpenCV (must be before env creation)
 macros.IMAGE_CONVENTION = "opencv"
 
@@ -748,6 +751,24 @@ def train(args):
                     preprocessor.save_pretrained(checkpoint_path)
                     postprocessor.save_pretrained(checkpoint_path)
                     print(f"✓ Saved best model (success rate: {best_success_rate:.1f}%)")
+
+                    # Upload to W&B for version control and DAgger preparation
+                    if args.use_wandb:
+                        metadata = create_artifact_metadata(
+                            repo_id=args.repo_id,
+                            success_rate=best_success_rate / 100.0,
+                            avg_reward=metrics["avg_reward"],
+                            step=step,
+                            is_best=True,
+                            dataset_size=len(dataset),
+                        )
+                        artifact_name = f"act-{args.repo_id}-best-step-{step}"
+                        upload_checkpoint_to_wandb(
+                            checkpoint_path=checkpoint_path,
+                            artifact_name=artifact_name,
+                            description=f"Best ACT policy (success: {best_success_rate:.1f}%, step: {step})",
+                            metadata=metadata,
+                        )
                     print()
 
             # Save periodic checkpoint
@@ -757,6 +778,16 @@ def train(args):
                 preprocessor.save_pretrained(checkpoint_path)
                 postprocessor.save_pretrained(checkpoint_path)
                 print(f"✓ Saved checkpoint at step {step}")
+
+                # Upload to W&B for version control
+                if args.use_wandb:
+                    artifact_name = f"act-{args.repo_id}-checkpoint-step-{step}"
+                    upload_checkpoint_to_wandb(
+                        checkpoint_path=checkpoint_path,
+                        artifact_name=artifact_name,
+                        description=f"ACT policy checkpoint at step {step}",
+                        metadata={"step": step, "repo_id": args.repo_id},
+                    )
                 print()
 
             step += 1
@@ -809,6 +840,24 @@ def train(args):
     preprocessor.save_pretrained(checkpoint_path)
     postprocessor.save_pretrained(checkpoint_path)
     print(f"✓ Saved final model to {checkpoint_path}")
+
+    # Upload final model to W&B
+    if args.use_wandb:
+        metadata = create_artifact_metadata(
+            repo_id=args.repo_id,
+            success_rate=metrics["success_rate"] / 100.0,
+            avg_reward=metrics["avg_reward"],
+            step=step,
+            is_best=False,
+            dataset_size=len(dataset),
+        )
+        artifact_name = f"act-{args.repo_id}-final"
+        upload_checkpoint_to_wandb(
+            checkpoint_path=checkpoint_path,
+            artifact_name=artifact_name,
+            description=f"Final ACT policy after {step} steps (success: {metrics['success_rate']:.1f}%)",
+            metadata=metadata,
+        )
 
     # Cleanup
     eval_env.close()

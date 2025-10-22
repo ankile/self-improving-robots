@@ -2,6 +2,19 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## CRITICAL: LeRobot Library Usage
+
+**ALWAYS check the actual lerobot code before using any imports!**
+
+The latest version of lerobot (v3.0) has the following structure:
+- ✅ CORRECT: `from lerobot.datasets.lerobot_dataset import LeRobotDataset`
+- ❌ WRONG: `from lerobot.common.datasets.lerobot_dataset import LeRobotDataset` (no `common` module exists)
+
+When using lerobot APIs:
+1. **Always read the actual source code** at `/Users/larsankile/code/lerobot/src/lerobot/` before making assumptions
+2. **Check the actual method signatures** - e.g., `push_to_hub()` uses `branch` parameter, not `revision`
+3. **Never rely on outdated documentation or memory** - the API has changed significantly between versions
+
 ## Project Overview
 
 **Robots Learning from their Mistakes** - Research on continual robot learning through RL fine-tuning and online adaptation.

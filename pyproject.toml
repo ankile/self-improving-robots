@@ -62,3 +62,7 @@ target-version = ["py311"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+src = ["sir"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["sir"]

@@ -1,0 +1,21 @@
+{
+  "pythonVersion": "3.11",
+  "pythonPlatform": "Darwin",
+  "venvPath": "/Users/larsankile/.local/share/mamba/envs",
+  "venv": "sir",
+  "extraPaths": [
+    "/Users/larsankile/code/self-improving-robots-work-folder/lerobot/src",
+    "/Users/larsankile/code/self-improving-robots-work-folder/robosuite",
+    "/Users/larsankile/code/self-improving-robots-work-folder/robomimic",
+    "/Users/larsankile/code/self-improving-robots-work-folder/maniskill"
+  ],
+  "exclude": [
+    "**/node_modules",
+    "**/__pycache__",
+    ".git",
+    "wandb",
+    "data",
+    "checkpoints",
+    "videos"
+  ]
+}
