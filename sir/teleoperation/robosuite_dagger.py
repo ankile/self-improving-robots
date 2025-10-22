@@ -40,9 +40,19 @@ Usage:
         --max-steps 400 \
         --wandb-project my-dagger-project
 
+    # Auto-save on task success (no manual intervention needed for successful episodes)
+    mjpython -m sir.teleoperation.robosuite_dagger \
+        --wandb-artifact "my-project/act-lift-best:v3" \
+        --env Lift \
+        --robot Panda \
+        --cameras "agentview" \
+        --dataset-name lift-dagger-v1 \
+        --auto-save-on-success
+
 Controls:
     During policy rollout:
     - 'h' key: Trigger human intervention (policy failed, switch to spacemouse)
+    - With --auto-save-on-success: Successful episodes save automatically (no intervention needed)
 
     During spacemouse mode:
     - SpaceMouse: Control robot end-effector (6-DOF)
@@ -232,6 +242,11 @@ def parse_args():
         default=20,
         help="Frame rate limit (default: 20 Hz, real-time)",
     )
+    parser.add_argument(
+        "--auto-save-on-success",
+        action="store_true",
+        help="Automatically save policy episode when task completion is detected (no need to intervene)",
+    )
 
     return parser.parse_args()
 
@@ -331,9 +346,13 @@ def policy_rollout_episode(
     max_steps: int = 400,
     max_fr: int = 20,
     has_renderer: bool = True,
+    auto_save_on_success: bool = False,
 ) -> Tuple[Optional[Dict], bool, bool]:
     """
     Run policy rollout with option for human intervention.
+
+    Args:
+        auto_save_on_success: Automatically end episode and save when task success is detected
 
     Returns:
         Tuple of (episode_data, intervention_triggered, task_success)
@@ -373,13 +392,18 @@ def policy_rollout_episode(
     print("POLICY ROLLOUT MODE")
     print("=" * 60)
     print("Policy is controlling the robot...")
-    print("Press 'h' to trigger human INTERVENTION")
+    if auto_save_on_success:
+        print("Auto-save ENABLED: Episode will save automatically when task success is detected")
+        print("Press 'h' for manual INTERVENTION (if needed)")
+    else:
+        print("Press 'h' to trigger human INTERVENTION")
     print("=" * 60)
     print()
 
     step_count = 0
     intervention_triggered = False
     task_success = False
+    success_announced = False  # Track if we've announced task success
 
     for step_count in range(max_steps):
         start = time.time()
@@ -430,6 +454,34 @@ def policy_rollout_episode(
         if has_renderer:
             env.render()
 
+        # Check for task success and announce once (BEFORE storing data)
+        if not success_announced and hasattr(env, '_check_success'):
+            task_success = env._check_success()
+            if task_success:
+                success_announced = True
+                print()
+                print("*" * 60)
+                print("TASK SUCCESSFUL! Environment detected task completion!")
+                print("*" * 60)
+                print()
+
+                # Automatically save and end episode if enabled
+                if auto_save_on_success:
+                    print("Auto-save enabled - saving episode as SUCCESS")
+                    print("=" * 60)
+                    print(f"POLICY SUCCEEDED! Task completed in {step_count + 1} steps")
+                    print("=" * 60)
+                    print()
+                    # Store this final step before breaking
+                    episode_data["observations"].append(state.copy())
+                    episode_data["actions"].append(action.copy())
+                    episode_data["rewards"].append(reward)
+                    episode_data["dones"].append(done)
+                    for cam_key in camera_keys:
+                        if cam_key in obs:
+                            episode_data[cam_key].append(obs[cam_key].copy())
+                    break
+
         # Store data
         episode_data["observations"].append(state.copy())
         episode_data["actions"].append(action.copy())
@@ -440,14 +492,6 @@ def policy_rollout_episode(
         for cam_key in camera_keys:
             if cam_key in obs:
                 episode_data[cam_key].append(obs[cam_key].copy())
-
-        # Check for task success
-        if reward == 1.0:
-            task_success = True
-            print("\n" + "=" * 60)
-            print(f"POLICY SUCCEEDED! Task completed in {step_count + 1} steps")
-            print("=" * 60)
-            break
 
         # Limit frame rate
         if max_fr is not None:
@@ -473,14 +517,18 @@ def spacemouse_correction_episode(
     has_renderer: bool = True,
     record_gripper_motion: bool = True,
     gripper_vel_threshold: float = 0.01,
+    auto_save_on_success: bool = False,
 ) -> Tuple[Optional[Dict], bool]:
     """
     Collect human correction using SpaceMouse.
 
+    Args:
+        auto_save_on_success: Automatically save when task completion is detected
+
     Returns:
         Tuple of (episode_data, success)
         - episode_data: Dict with trajectory data (None if discarded)
-        - success: True if user marked as success (pressed '1')
+        - success: True if user marked as success (pressed '1' or auto-saved)
     """
     # Get current observation (don't reset - continue from where policy left off)
     obs = env._get_observations()
@@ -507,8 +555,12 @@ def spacemouse_correction_episode(
     print("SPACEMOUSE CORRECTION MODE")
     print("=" * 60)
     print("Use SpaceMouse to correct the robot's behavior")
-    print("Press '1' to mark as SUCCESS and save")
-    print("Press '0' to DISCARD and skip")
+    if auto_save_on_success:
+        print("Auto-save ENABLED: Episode will save automatically when task success is detected")
+        print("Press '0' to DISCARD and skip")
+    else:
+        print("Press '1' to mark as SUCCESS and save")
+        print("Press '0' to DISCARD and skip")
     print("=" * 60)
     print()
 
@@ -516,6 +568,7 @@ def spacemouse_correction_episode(
     prev_gripper = device.control_gripper
     gripper_is_moving = False
     target_gripper_state = prev_gripper
+    success_announced = False  # Track if we've announced task success
 
     while True:
         start = time.time()
@@ -565,6 +618,39 @@ def spacemouse_correction_episode(
         obs, reward, done, info = env.step(action)
         if has_renderer:
             env.render()
+
+        # Check for task success and announce once
+        if not success_announced and hasattr(env, '_check_success'):
+            task_success = env._check_success()
+            if task_success:
+                success_announced = True
+                print()
+                print("*" * 60)
+                print("TASK SUCCESSFUL! Environment detected task completion!")
+                print("*" * 60)
+                print()
+
+                # Automatically save and end episode if enabled
+                if auto_save_on_success:
+                    print("Auto-save enabled - saving episode as SUCCESS")
+                    print("=" * 60)
+                    print(f"SUCCESS! Correction saved ({step_count} steps)")
+                    print("=" * 60)
+                    print()
+                    # Store this final step if there's input
+                    has_input = np.any(np.abs(control) > 0.01) or (gripper != prev_gripper) or gripper_is_moving
+                    if has_input:
+                        state_keys = ["robot0_eef_pos", "robot0_eef_quat", "robot0_gripper_qpos"]
+                        state_keys = [k for k in state_keys if k in obs]
+                        state_obs = np.concatenate([obs[k].flatten() for k in state_keys])
+                        episode_data["observations"].append(state_obs)
+                        episode_data["actions"].append(action.copy())
+                        episode_data["rewards"].append(reward)
+                        episode_data["dones"].append(done)
+                        for cam_key in camera_keys:
+                            if cam_key in obs:
+                                episode_data[cam_key].append(obs[cam_key].copy())
+                    return episode_data, True
 
         # Check gripper motion
         if gripper_is_moving and record_gripper_motion:
@@ -806,6 +892,7 @@ def main():
                 max_steps=args.max_steps,
                 max_fr=args.max_fr,
                 has_renderer=not args.headless,
+                auto_save_on_success=args.auto_save_on_success,
             )
 
             # Initialize dataset on first save
@@ -890,6 +977,7 @@ def main():
                     camera_names=camera_names,
                     max_fr=args.max_fr,
                     has_renderer=not args.headless,
+                    auto_save_on_success=args.auto_save_on_success,
                 )
 
                 # Save human correction if marked as success
