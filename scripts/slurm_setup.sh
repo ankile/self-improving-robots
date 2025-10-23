@@ -3,13 +3,19 @@
 # SLURM Server Setup Script
 #
 # This script sets up a complete environment for training on a SLURM-based cluster.
-# Usage: bash scripts/slurm_setup.sh [--base-dir BASE_DIR] [--env-name ENV_NAME]
+#
+# Usage: 
+#   From inside self-improving-robots: bash scripts/slurm_setup.sh [BASE_DIR] [ENV_NAME]
+#   From work folder: bash self-improving-robots/scripts/slurm_setup.sh [BASE_DIR] [ENV_NAME]
 #
 # The script will:
-# 1. Clone/update all required repositories
-# 2. Create a conda environment with all dependencies
-# 3. Install the self-improving-robots package in editable mode
+# 1. Clone/update all required repositories (lerobot, robosuite, maniskill) as siblings
+# 2. Create a micromamba/mamba/conda environment with all dependencies
+# 3. Install all packages in editable mode
 # 4. Verify the installation
+#
+# Note: All repos (self-improving-robots, lerobot, robosuite, maniskill) will be
+#       placed as siblings in the same parent directory (work folder)
 #
 
 set -e  # Exit on any error
@@ -18,6 +24,18 @@ set -e  # Exit on any error
 BASE_DIR="${1:-.}"
 ENV_NAME="${2:-sir}"
 CONDA_INIT_FILE=""
+
+# Detect if we're running from inside self-improving-robots and adjust BASE_DIR
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ "$SCRIPT_DIR" == */self-improving-robots/scripts ]]; then
+    # We're inside self-improving-robots, go up to parent work folder
+    if [ "$BASE_DIR" = "." ]; then
+        BASE_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+        echo "Detected script running from self-improving-robots/"
+        echo "Using parent directory as BASE_DIR: $BASE_DIR"
+        echo ""
+    fi
+fi
 
 # Detect micromamba/mamba/conda command (prefer micromamba)
 if command -v micromamba &> /dev/null; then
