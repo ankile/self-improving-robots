@@ -842,7 +842,7 @@ def train(args):
                     wandb.log(wandb_log, step=step)
 
             # Evaluation
-            if step > 0 and step % args.eval_freq == 0:
+            if (step > 0 and step % args.eval_freq == 0) or step >= args.training_steps:
                 print("\nEvaluating policy...")
                 metrics, video_path = evaluate_policy(
                     policy,
@@ -955,45 +955,6 @@ def train(args):
             if step >= args.training_steps:
                 done = True
                 break
-
-    # Final evaluation
-    print("\n" + "=" * 60)
-    print("Training complete! Running final evaluation...")
-    print("=" * 60)
-    metrics, video_path = evaluate_policy(
-        policy,
-        preprocessor,
-        dataset_metadata.stats["action"],
-        eval_env,
-        num_episodes=args.eval_episodes * 2,  # More episodes for final eval
-        max_steps=args.max_steps,
-        device=args.device,
-        save_video=args.save_video,
-        output_dir=args.video_dir,
-        step=None,  # Final eval (no step number)
-    )
-
-    print("\nFinal Evaluation Results:")
-    print(f"  Success Rate: {metrics['success_rate']:.1f}%")
-    print(f"  Avg Reward: {metrics['avg_reward']:.3f}")
-    print(f"  Avg Length: {metrics['avg_length']:.1f}")
-    print()
-
-    # Log final evaluation to wandb
-    if args.use_wandb:
-        wandb_log = {
-            "final_eval/success_rate": metrics["success_rate"],
-            "final_eval/avg_reward": metrics["avg_reward"],
-            "final_eval/avg_length": metrics["avg_length"],
-        }
-        # Log video if available
-        if video_path is not None:
-            wandb_log["final_eval/video"] = wandb.Video(video_path, format="mp4")
-        wandb.log(wandb_log, step=step)
-
-        # Force garbage collection to clean up video files
-        if video_path is not None:
-            gc.collect()
 
     # Save final model
     checkpoint_path = checkpoint_dir / "final_model"
