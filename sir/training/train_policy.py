@@ -171,7 +171,10 @@ def parse_args():
         "Maps to 'chunk_size' for ACT/PI0 or 'horizon' for Diffusion",
     )
     parser.add_argument(
-        "--n-obs-steps", type=int, default=None, help="Number of observation steps (default: policy-specific default)"
+        "--n-obs-steps",
+        type=int,
+        default=None,
+        help="Number of observation steps (default: policy-specific default)",
     )
     parser.add_argument(
         "--n-action-steps",
@@ -655,10 +658,21 @@ def train(args):
         config[f"dataset/{safe_name}/total_frames"] = info["total_frames"]
         config[f"dataset/{safe_name}/revision"] = info["revision"]
 
+    # Generate descriptive run name if not provided
+    if args.wandb_run_name is None:
+        # Extract short dataset names (e.g., "square-v1" from "ankile/square-v1")
+        dataset_names = [rid.split("/")[-1] for rid in repo_ids]
+        datasets_str = "+".join(dataset_names)
+
+        # Create descriptive name: policy-env-datasets
+        run_name = f"{args.policy}-{args.env}-{datasets_str}"
+    else:
+        run_name = args.wandb_run_name
+
     wandb.init(
         project=args.wandb_project,
         entity=args.wandb_entity,
-        name=args.wandb_run_name,
+        name=run_name,
         config=config,
         mode="online" if args.use_wandb else "disabled",
     )
@@ -762,7 +776,10 @@ def train(args):
     delta_timestamps = {}
 
     # Get action delta indices from policy config
-    if hasattr(policy_config, "action_delta_indices") and policy_config.action_delta_indices is not None:
+    if (
+        hasattr(policy_config, "action_delta_indices")
+        and policy_config.action_delta_indices is not None
+    ):
         delta_timestamps["action"] = [i / fps for i in policy_config.action_delta_indices]
     else:
         # Fallback: use chunk_size or horizon
@@ -770,7 +787,10 @@ def train(args):
         delta_timestamps["action"] = [i / fps for i in range(action_horizon)]
 
     # Get observation delta indices from policy config
-    if hasattr(policy_config, "observation_delta_indices") and policy_config.observation_delta_indices is not None:
+    if (
+        hasattr(policy_config, "observation_delta_indices")
+        and policy_config.observation_delta_indices is not None
+    ):
         # Use policy-specific observation deltas for all observation keys
         for key in input_features.keys():
             if key.startswith("observation."):

@@ -10,9 +10,10 @@
 #
 # The script will:
 # 1. Clone/update all required repositories (lerobot, robosuite, maniskill) as siblings
-# 2. Create a micromamba/mamba/conda environment with all dependencies
-# 3. Install all packages in editable mode
-# 4. Verify the installation
+# 2. Create a micromamba/mamba/conda environment with Python 3.11
+# 3. Install FFmpeg (required for video processing)
+# 4. Install PyTorch and all packages in editable mode
+# 5. Verify the installation
 #
 # Note: All repos (self-improving-robots, lerobot, robosuite, maniskill) will be
 #       placed as siblings in the same parent directory (work folder)
@@ -152,8 +153,15 @@ $CONDA_CMD activate "$ENV_NAME"
 echo "✓ Conda environment created and activated"
 echo ""
 
-# Step 4: Install core dependencies
-echo "Step 3: Installing core dependencies..."
+# Step 4: Install FFmpeg (required for torchcodec/video processing)
+echo "Step 3: Installing FFmpeg 7 (required for torchcodec)..."
+$CONDA_CMD install -y -c conda-forge "ffmpeg=7.*"
+
+echo "✓ FFmpeg 7 installed with codecs"
+echo ""
+
+# Step 5: Install core dependencies
+echo "Step 4: Installing core dependencies..."
 
 # Update pip
 pip install --upgrade pip setuptools wheel
@@ -166,40 +174,40 @@ pip install torch torchvision torchaudio --index-url https://download.pytorch.or
 echo "✓ PyTorch installed"
 echo ""
 
-# Step 5: Install lerobot
-echo "Step 4: Installing lerobot..."
+# Step 6: Install lerobot
+echo "Step 5: Installing lerobot..."
 cd "$BASE_DIR/lerobot"
 pip install -e .
 cd "$BASE_DIR"
 echo "✓ lerobot installed"
 echo ""
 
-# Step 6: Install robosuite (optional but recommended)
-echo "Step 5: Installing robosuite..."
+# Step 7: Install robosuite (optional but recommended)
+echo "Step 6: Installing robosuite..."
 cd "$BASE_DIR/robosuite"
 pip install -e .
 cd "$BASE_DIR"
 echo "✓ robosuite installed"
 echo ""
 
-# Step 7: Install ManiSkill
-echo "Step 6: Installing ManiSkill..."
+# Step 8: Install ManiSkill
+echo "Step 7: Installing ManiSkill..."
 cd "$BASE_DIR/maniskill"
 pip install -e .
 cd "$BASE_DIR"
 echo "✓ ManiSkill installed"
 echo ""
 
-# Step 8: Install self-improving-robots
-echo "Step 7: Installing self-improving-robots..."
+# Step 9: Install self-improving-robots
+echo "Step 8: Installing self-improving-robots..."
 cd "$BASE_DIR/self-improving-robots"
 pip install -e .
 cd "$BASE_DIR"
 echo "✓ self-improving-robots installed"
 echo ""
 
-# Step 9: Install additional training dependencies
-echo "Step 8: Installing training dependencies..."
+# Step 10: Install additional training dependencies
+echo "Step 9: Installing training dependencies..."
 pip install \
     wandb \
     hydra-core \
@@ -210,8 +218,34 @@ pip install \
 echo "✓ Training dependencies installed"
 echo ""
 
-# Step 10: Verify installation
-echo "Step 9: Verifying installation..."
+# Step 11: Configure environment variables for FFmpeg
+echo "Step 10: Configuring environment variables..."
+
+# Get the conda environment prefix
+if [ "$CONDA_CMD" = "micromamba" ]; then
+    ENV_PREFIX="$MAMBA_ROOT_PREFIX/envs/$ENV_NAME"
+else
+    ENV_PREFIX="$(conda info --base)/envs/$ENV_NAME"
+fi
+
+# Set up environment variables for this session
+export LD_LIBRARY_PATH="$ENV_PREFIX/lib:$LD_LIBRARY_PATH"
+
+# Create activation script to set LD_LIBRARY_PATH automatically
+mkdir -p "$ENV_PREFIX/etc/conda/activate.d"
+cat > "$ENV_PREFIX/etc/conda/activate.d/env_vars.sh" << 'EOF'
+#!/bin/sh
+export LD_LIBRARY_PATH="$CONDA_PREFIX/lib:$LD_LIBRARY_PATH"
+EOF
+
+chmod +x "$ENV_PREFIX/etc/conda/activate.d/env_vars.sh"
+
+echo "✓ Environment variables configured"
+echo "  LD_LIBRARY_PATH set to include: $ENV_PREFIX/lib"
+echo ""
+
+# Step 12: Verify installation
+echo "Step 11: Verifying installation..."
 python -c "
 import torch
 import lerobot
@@ -231,6 +265,9 @@ echo "============================================================"
 echo ""
 echo "To activate the environment in the future, run:"
 echo "  $CONDA_CMD activate $ENV_NAME"
+echo ""
+echo "Note: LD_LIBRARY_PATH will be automatically set when you activate the environment."
+echo "      This is required for FFmpeg/video processing to work correctly."
 echo ""
 echo "To submit a training job, run:"
 echo "  sbatch scripts/slurm_train_act.sh --repo-id YOUR_REPO_ID"
