@@ -327,7 +327,7 @@ def create_robosuite_env(
 def evaluate_policy(
     policy: PreTrainedPolicy,
     preprocessor: Any,
-    action_stats: Dict[str, Any],
+    postprocessor: Any,
     env: RobosuiteRenderWrapper,
     num_episodes: int = 10,
     max_steps: int = 400,
@@ -342,7 +342,7 @@ def evaluate_policy(
     Args:
         policy: Robot learning policy (ACT, Diffusion, PI0, etc.)
         preprocessor: Preprocessor for normalizing observations
-        action_stats: Action statistics from dataset (for denormalization)
+        postprocessor: Postprocessor for denormalizing actions
         env: Robosuite environment
         num_episodes: Number of episodes to evaluate
         max_steps: Maximum steps per episode
@@ -376,15 +376,6 @@ def evaluate_policy(
             if img_key.startswith("observation.images."):
                 cam_name = img_key.replace("observation.images.", "")
                 camera_names.append(cam_name)
-
-    # Prepare action denormalization stats (convert once for efficiency)
-    # MPS doesn't support float64, so we ensure float32
-    if isinstance(action_stats["mean"], torch.Tensor):
-        action_mean = action_stats["mean"].to(device=device, dtype=torch.float32)
-        action_std = action_stats["std"].to(device=device, dtype=torch.float32)
-    else:
-        action_mean = torch.tensor(action_stats["mean"], device=device, dtype=torch.float32)
-        action_std = torch.tensor(action_stats["std"], device=device, dtype=torch.float32)
 
     for ep in range(num_episodes):
         print(f"  Episode {ep + 1}/{num_episodes}", end="", flush=True)
@@ -431,13 +422,14 @@ def evaluate_policy(
             obs_dict = preprocessor(obs_dict)
 
             with torch.no_grad():
-                # ACT's select_action returns a single action (manages action queue internally)
+                # Policy inference: select_action returns a single action (manages action queue internally)
                 action_tensor = policy.select_action(obs_dict)
 
-                # Denormalize action manually using dataset stats
-                # normalized = (value - mean) / std  ->  value = normalized * std + mean
-                action_denorm = action_tensor * action_std + action_mean
-                action = action_denorm.cpu().numpy()[0]
+                # Denormalize action using postprocessor (handles all normalization modes: MEAN_STD, MIN_MAX, QUANTILES, etc.)
+                action_tensor = postprocessor(action_tensor)
+
+                # Convert to numpy for environment
+                action = action_tensor.cpu().numpy()[0]
 
             # Step environment
             obs, reward, done, info = env.step(action)
@@ -958,7 +950,7 @@ def train(args):
                 metrics, video_path = evaluate_policy(
                     policy,
                     preprocessor,
-                    dataset_metadata.stats["action"],
+                    postprocessor,
                     eval_env,
                     num_episodes=args.eval_episodes,
                     max_steps=args.max_steps,
