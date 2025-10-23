@@ -61,7 +61,7 @@ fi
 
 echo "  - lerobot"
 if [ ! -d "lerobot" ]; then
-    git clone https://github.com/lerobotics/lerobot.git
+    git clone https://github.com/huggingface/lerobot.git
 else
     cd lerobot && git pull && cd ..
 fi
