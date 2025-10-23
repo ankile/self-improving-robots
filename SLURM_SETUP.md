@@ -27,6 +27,7 @@ bash scripts/slurm_setup.sh [--base-dir BASE_DIR] [--env-name ENV_NAME]
 ```
 
 **What it does:**
+
 - Clones all required repositories (self-improving-robots, lerobot, robosuite, maniskill)
 - Creates a conda environment with Python 3.11
 - Installs PyTorch (CPU or GPU - adjust as needed)
@@ -34,11 +35,16 @@ bash scripts/slurm_setup.sh [--base-dir BASE_DIR] [--env-name ENV_NAME]
 - Verifies the installation
 
 **Prerequisites:**
-- `conda` or `mamba` must be installed
+
+- `micromamba`, `mamba`, or `conda` must be installed (micromamba preferred for SLURM)
+  - On SLURM: Try `module load micromamba` or `module load miniconda3`
+  - Quick install: `"${SHELL}" <(curl -L micro.mamba.pm/install.sh)`
+  - Or see: https://mamba.readthedocs.io/en/latest/installation/micromamba-installation.html
 - Git must be available
 - 50+ GB of free disk space (for repos and dependencies)
 
 **Example:**
+
 ```bash
 # Setup in current directory with environment name "sir"
 bash scripts/slurm_setup.sh
@@ -86,6 +92,7 @@ bash scripts/slurm_submit_training.sh \
 ```
 
 **Common options:**
+
 ```bash
 --repo-id REPO_ID              # HuggingFace dataset ID (required)
 --job-name NAME                # Job name (default: act-training)
@@ -181,6 +188,7 @@ python -m sir.training.train_act \
 ## Monitoring Jobs
 
 ### Check job status
+
 ```bash
 # List all your jobs
 squeue -u $USER
@@ -193,6 +201,7 @@ watch squeue -j JOB_ID
 ```
 
 ### View output
+
 ```bash
 # View current output
 tail -f logs/slurm-JOB_ID.out
@@ -205,6 +214,7 @@ cat logs/slurm-JOB_ID.err
 ```
 
 ### Cancel job
+
 ```bash
 scancel JOB_ID
 ```
@@ -214,6 +224,7 @@ scancel JOB_ID
 The default setup assumes a single GPU. For multi-GPU training:
 
 1. Update SLURM settings:
+
 ```bash
 bash scripts/slurm_submit_training.sh \
   --repo-id my_dataset \
@@ -222,6 +233,7 @@ bash scripts/slurm_submit_training.sh \
 ```
 
 2. Or manually in SLURM script:
+
 ```bash
 #SBATCH --gres=gpu:2
 #SBATCH --cpus-per-task=16
@@ -237,6 +249,7 @@ pip install torch torchvision torchaudio --index-url https://download.pytorch.or
 ```
 
 For CUDA 11.8 with PyTorch. Adjust the CUDA version based on your cluster:
+
 - `cu118` for CUDA 11.8
 - `cu121` for CUDA 12.1
 - `cu124` for CUDA 12.4
@@ -248,20 +261,25 @@ Check your cluster's CUDA version with `nvcc --version`.
 ### Setup issues
 
 **Issue: "conda: command not found"**
+
 - Solution: Install conda or mamba first
 - Mamba: https://github.com/conda-forge/miniforge
 
 **Issue: "No space left on device"**
+
 - Solution: Check disk space with `df -h`, or use a different base directory
 - Repos require ~20GB, dependencies another ~20GB
 
 **Issue: "Permission denied"**
+
 - Solution: Make scripts executable: `chmod +x scripts/*.sh`
 
 ### Runtime issues
 
 **Issue: "CUDA out of memory"**
+
 - Solution: Reduce batch size or use fewer GPUs
+
 ```bash
 bash scripts/slurm_submit_training.sh \
   --repo-id my_dataset \
@@ -269,17 +287,22 @@ bash scripts/slurm_submit_training.sh \
 ```
 
 **Issue: "Dataset not found"**
+
 - Ensure HuggingFace Hub dataset exists and is public or you have access
 - Check repo-id is correct: `--repo-id username/dataset-name`
 
 **Issue: "W&B authentication failed"**
+
 - Solution: Login to W&B first:
+
 ```bash
 wandb login
 ```
+
 - Or use `--no-wandb` flag
 
 **Issue: Job stuck or not starting**
+
 - Check partition availability: `sinfo`
 - Check node status: `sinfo -N`
 - Reduce resource requirements and try again
@@ -361,6 +384,7 @@ bash scripts/slurm_submit_training.sh --repo-id my_dataset
 ## Best Practices
 
 1. **Test locally first**: Run a short training locally before submitting to SLURM
+
 ```bash
 python -m sir.training.train_act \
   --repo-id my_dataset \
@@ -368,6 +392,7 @@ python -m sir.training.train_act \
 ```
 
 2. **Use reasonable time limits**: Start conservative, increase as needed
+
 ```bash
 --time 24:00:00  # 24 hours for initial testing
 ```
@@ -375,11 +400,13 @@ python -m sir.training.train_act \
 3. **Monitor W&B**: Track training progress in real-time at wandb.ai
 
 4. **Save checkpoints**: Enable video and checkpoint saving
+
 ```bash
 --save-video --eval-freq 500
 ```
 
 5. **Use dry-run first**: Preview your job before submitting
+
 ```bash
 --dry-run
 ```
@@ -387,6 +414,7 @@ python -m sir.training.train_act \
 ## Support
 
 For issues with:
+
 - **Setup**: Check error messages in terminal
 - **SLURM**: Contact your cluster administrator
 - **Training**: Check logs in `logs/slurm-*.out`

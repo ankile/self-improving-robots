@@ -37,6 +37,23 @@ if [[ "$SCRIPT_DIR" == */self-improving-robots/scripts ]]; then
     fi
 fi
 
+# Try to initialize micromamba if it exists in common locations but isn't in PATH
+if ! command -v micromamba &> /dev/null; then
+    # Check common micromamba installation locations
+    for MICROMAMBA_PATH in \
+        "$HOME/.local/bin/micromamba" \
+        "$HOME/micromamba/bin/micromamba" \
+        "/opt/micromamba/bin/micromamba" \
+        "$MAMBA_ROOT_PREFIX/bin/micromamba"; do
+        if [ -x "$MICROMAMBA_PATH" ]; then
+            echo "Found micromamba at: $MICROMAMBA_PATH"
+            echo "Initializing micromamba..."
+            eval "$("$MICROMAMBA_PATH" shell hook --shell bash)"
+            break
+        fi
+    done
+fi
+
 # Detect micromamba/mamba/conda command (prefer micromamba)
 if command -v micromamba &> /dev/null; then
     CONDA_CMD="micromamba"
@@ -45,10 +62,24 @@ elif command -v mamba &> /dev/null; then
 elif command -v conda &> /dev/null; then
     CONDA_CMD="conda"
 else
-    echo "Error: Neither micromamba, mamba, nor conda found. Please install one of them first."
-    echo "  micromamba: https://mamba.readthedocs.io/en/latest/installation/micromamba-installation.html"
-    echo "  mamba: https://github.com/conda-forge/miniforge"
-    echo "  conda: https://www.anaconda.com/download"
+    echo "Error: Neither micromamba, mamba, nor conda found in PATH."
+    echo ""
+    echo "Please try one of the following:"
+    echo ""
+    echo "1. Load a module (if on SLURM cluster):"
+    echo "   module load micromamba"
+    echo "   # or: module load miniconda3"
+    echo ""
+    echo "2. Initialize micromamba if already installed:"
+    echo "   eval \"\$(micromamba shell hook --shell bash)\""
+    echo ""
+    echo "3. Install micromamba (quick install):"
+    echo "   \"\${SHELL}\" <(curl -L micro.mamba.pm/install.sh)"
+    echo ""
+    echo "4. Install from other sources:"
+    echo "   micromamba: https://mamba.readthedocs.io/en/latest/installation/micromamba-installation.html"
+    echo "   mamba: https://github.com/conda-forge/miniforge"
+    echo "   conda: https://www.anaconda.com/download"
     exit 1
 fi
 
