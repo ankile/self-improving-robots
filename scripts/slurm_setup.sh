@@ -217,7 +217,8 @@ import torch
 import lerobot
 import gymnasium
 import robosuite
-from sir.training import train_act
+import sir.training
+import sir.teleoperation
 print('✓ All imports successful!')
 print(f'  PyTorch version: {torch.__version__}')
 print(f'  Device available: {torch.backends.mps.is_available() or torch.cuda.is_available()}')
