@@ -19,13 +19,16 @@ BASE_DIR="${1:-.}"
 ENV_NAME="${2:-sir}"
 CONDA_INIT_FILE=""
 
-# Detect conda/mamba command
-if command -v mamba &> /dev/null; then
+# Detect micromamba/mamba/conda command (prefer micromamba)
+if command -v micromamba &> /dev/null; then
+    CONDA_CMD="micromamba"
+elif command -v mamba &> /dev/null; then
     CONDA_CMD="mamba"
 elif command -v conda &> /dev/null; then
     CONDA_CMD="conda"
 else
-    echo "Error: Neither mamba nor conda found. Please install one of them first."
+    echo "Error: Neither micromamba, mamba, nor conda found. Please install one of them first."
+    echo "  micromamba: https://mamba.readthedocs.io/en/latest/installation/micromamba-installation.html"
     echo "  mamba: https://github.com/conda-forge/miniforge"
     echo "  conda: https://www.anaconda.com/download"
     exit 1
@@ -89,8 +92,12 @@ echo ""
 # Create environment with Python 3.11
 $CONDA_CMD create -n "$ENV_NAME" python=3.11 -y
 
-# Get the conda activation script
-eval "$($CONDA_CMD shell.bash hook)"
+# Get the activation script (micromamba uses different hook syntax)
+if [ "$CONDA_CMD" = "micromamba" ]; then
+    eval "$(micromamba shell hook --shell bash)"
+else
+    eval "$($CONDA_CMD shell.bash hook)"
+fi
 $CONDA_CMD activate "$ENV_NAME"
 
 echo "✓ Conda environment created and activated"

@@ -41,6 +41,12 @@ dev = [
 robosuite = [
     "robosuite",  # Optional dependency for Robosuite teleoperation
 ]
+viewer = [
+    "Flask>=2.2",
+    "pyarrow>=12.0",
+    "pandas>=2.0",
+    "requests>=2.31",
+]
 
 [project.urls]
 Homepage = "https://github.com/ankile/self-improving-robots"
@@ -51,9 +57,14 @@ sir-teleop = "sir.teleoperation.maniskill_teleop:main"
 sir-teleop-robosuite = "sir.teleoperation.robosuite_teleop:main"
 sir-test-spacemouse = "sir.tests.test_spacemouse:main"
 sir-test-env = "sir.tests.test_maniskill_env:main"
+sir-dataset-viewer = "sir.tools.lerobot_viewer:main"
+sir-legacy-dataset-viewer = "sir.tools.lerobot_legacy_viewer:main"
 
 [tool.setuptools.packages.find]
 include = ["sir*"]
+
+[tool.setuptools.package-data]
+"sir" = ["templates/*.html"]
 
 [tool.black]
 line-length = 100
