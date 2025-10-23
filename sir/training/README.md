@@ -1,47 +1,68 @@
 # Training Scripts
 
-## train_act.py
+## train_policy.py
 
-Simple, straightforward training script for ACT (Action Chunking Transformer) policy using LeRobot.
+General training script for robot learning policies (ACT, Diffusion, PI0, etc.) using LeRobot.
 
 ### Features
 
-- Loads LeRobotDataset from local storage
-- Trains ACT policy with supervised behavioral cloning (BC) loss
+- **Multi-policy support**: Train ACT, Diffusion, PI0, PI05, VQBeT, TDMPC, SAC, or SmolVLA policies
+- **Multi-dataset support**: Automatically combines multiple datasets (e.g., BC + DAgger)
+- **DAgger filtering**: Automatically filters DAgger datasets to successful human corrections
+- Loads LeRobotDataset from local storage or HuggingFace Hub
+- Trains with supervised behavioral cloning (BC) loss
 - Evaluates in Robosuite environment at regular intervals
 - Saves best model (by success rate) and periodic checkpoints
 - Uses LeRobot's preprocessing/postprocessing for proper normalization
+- Optional Weights & Biases logging and video recording
 
 ### Usage
 
-Basic training:
+Train ACT policy (default):
 ```bash
-python -m sir.training.train_act \
-    --repo-id lift_minimal_state \
-    --root ./data/test_filtered \
-    --env Lift \
-    --robot Panda
+python -m sir.training.train_policy \
+    --repo-ids lift_minimal_state \
+    --root ./data \
+    --policy act
+```
+
+Train Diffusion policy:
+```bash
+python -m sir.training.train_policy \
+    --repo-ids lift_demos \
+    --root ./data \
+    --policy diffusion
+```
+
+Train with multiple datasets (BC + DAgger):
+```bash
+python -m sir.training.train_policy \
+    --repo-ids "lift_demos,lift_dagger" \
+    --root ./data \
+    --policy act
 ```
 
 With custom parameters:
 ```bash
-python -m sir.training.train_act \
-    --repo-id lift_minimal_state \
-    --root ./data/test_filtered \
-    --env Lift \
-    --robot Panda \
+python -m sir.training.train_policy \
+    --repo-ids lift_demos \
+    --root ./data \
+    --policy diffusion \
     --batch-size 32 \
-    --lr 1e-5 \
+    --lr 1e-4 \
     --training-steps 20000 \
     --eval-freq 2000 \
-    --chunk-size 20
+    --action-chunk-size 16
 ```
 
 ### Arguments
 
+**Policy:**
+- `--policy`: Policy type - act/diffusion/pi0/pi05/vqbet/tdmpc/sac/smolvla (default: act)
+
 **Dataset:**
-- `--repo-id`: Dataset name (required)
-- `--root`: Root directory containing datasets (default: `./data`)
+- `--repo-ids`: Comma-separated dataset names (required)
+- `--root`: Root directory containing datasets (default: HuggingFace Hub cache)
 
 **Environment:**
 - `--env`: Robosuite environment name (default: `Lift`)
@@ -49,25 +70,30 @@ python -m sir.training.train_act \
 
 **Training:**
 - `--batch-size`: Batch size (default: 16)
-- `--lr`: Learning rate (default: 1e-5)
+- `--lr`: Learning rate (default: policy-specific default)
 - `--training-steps`: Number of training steps (default: 10000)
-- `--eval-freq`: Evaluate every N steps (default: 10 for debugging, use 1000+ for real training)
+- `--eval-freq`: Evaluate every N steps (default: 1000)
 - `--eval-episodes`: Episodes per evaluation (default: 10)
 - `--max-steps`: Max steps per episode (default: 400)
 
-**ACT Policy:**
-- `--chunk-size`: Action chunk size (default: 20)
-- `--n-obs-steps`: Number of observation steps (default: 1)
-- `--n-action-steps`: Actions to execute per chunk (default: 20)
+**Policy-Specific:**
+- `--action-chunk-size`: Action chunk/horizon size (default: policy-specific)
+- `--n-obs-steps`: Number of observation steps (default: policy-specific)
+- `--n-action-steps`: Actions to execute per chunk (default: policy-specific)
 
 **System:**
 - `--device`: Device to use - cuda/mps/cpu (auto-detected)
 - `--num-workers`: Dataloader workers (default: 4)
 - `--checkpoint-dir`: Checkpoint directory (default: `./checkpoints`)
 
+**Logging:**
+- `--use-wandb`: Enable Weights & Biases logging
+- `--wandb-project`: W&B project name (default: `act-training`)
+- `--save-video`: Save evaluation rollout videos
+
 ### Output
 
-Checkpoints are saved to `./checkpoints/{repo_id}/`:
+Checkpoints are saved to `./checkpoints/{policy}_{dataset_name}/`:
 - `best_model/`: Best model by success rate
 - `checkpoint_{step}/`: Periodic checkpoints (every 5000 steps)
 - `final_model/`: Final model after training
@@ -81,15 +107,13 @@ Each checkpoint includes:
 ### Example Training Run
 
 ```bash
-# Train on collected Lift demonstrations
-python -m sir.training.train_act \
-    --repo-id lift_minimal_state \
-    --root ./data/test_filtered \
-    --env Lift \
-    --robot Panda \
+# Train ACT policy on Lift demonstrations
+python -m sir.training.train_policy \
+    --repo-ids lift_demos \
+    --root ./data \
+    --policy act \
     --training-steps 10000 \
-    --eval-freq 1000 \
-    --eval-episodes 10
+    --eval-freq 1000
 ```
 
 Output:
@@ -97,20 +121,21 @@ Output:
 ============================================================
 Training ACT Policy with LeRobot
 ============================================================
-Dataset: lift_minimal_state
-Root: ./data/test_filtered
+Policy: act
+Datasets: lift_demos
+Root: ./data
 Environment: Lift (Panda)
 Device: mps
 Batch size: 16
-Learning rate: 1e-05
-Training steps: 10000
-Action chunk size: 20
 ============================================================
+
+Filtering datasets...
+Processing dataset: lift_demos
+  Dataset 'lift_demos' is not a DAgger dataset (no source/success columns)
+  Using all 6 episodes
 
 Loading dataset metadata...
 ✓ Dataset metadata loaded
-  Total episodes: 6
-  Total frames: 845
   FPS: 20
 
 Input features:
@@ -121,14 +146,20 @@ Output features:
 Creating ACT policy...
 ✓ ACT policy created
   Parameters: 6,234,567
+  Chunk size: 20
+  Observation steps: 1
+  Action steps: 20
+  Learning rate: 1e-05
 
-Loading dataset...
-✓ Dataset loaded: 845 frames
+Loading dataset(s)...
+✓ Datasets loaded:
+  lift_demos: 6 episodes (of 6 total)
+  Total frames: 845
 
 Creating evaluation environment...
 ✓ Evaluation environment created
 
-Checkpoints will be saved to: ./checkpoints/lift_minimal_state
+Checkpoints will be saved to: ./checkpoints/act_lift_demos
 
 Starting training...
 ============================================================
@@ -146,12 +177,23 @@ Evaluation Results (step 1000):
 ...
 ```
 
+### Supported Policies
+
+- **ACT** (Action Chunking Transformer): Uses action chunking and VAE loss (L1 + KL divergence)
+- **Diffusion**: Diffusion-based action prediction with temporal consistency
+- **PI0/PI05**: Physical Intelligence's VLA-based policies
+- **VQBeT**: Vector-Quantized Behavior Transformer
+- **TDMPC**: Temporal Difference Model Predictive Control
+- **SAC**: Soft Actor-Critic (for RL fine-tuning)
+- **SmolVLA**: Efficient vision-language-action model
+
 ### Notes
 
-- ACT uses action chunking: predicts multiple future actions at once
-- Default chunk size is 20 (good balance between temporal consistency and responsiveness)
-- Training uses VAE loss (L1 + KL divergence) by default
+- Each policy uses its own default hyperparameters (learning rate, chunk size, etc.)
+- You can override defaults with command-line arguments
+- DAgger datasets are automatically filtered to successful human corrections
+- Multiple datasets are combined on-the-fly during training
 - Evaluation runs full episodes in the actual Robosuite environment
 - Best model is selected based on success rate during evaluation
-- Images are automatically detected and processed through ResNet18 vision backbone
-- State observations are concatenated with image features for the policy
+- Camera observations are automatically detected and processed
+- State observations are properly normalized using dataset statistics

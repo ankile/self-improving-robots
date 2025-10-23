@@ -173,47 +173,72 @@ export DYLD_LIBRARY_PATH=/opt/homebrew/Cellar/hidapi/0.15.0/lib:$DYLD_LIBRARY_PA
 ```
 Version may differ - check with `brew --prefix hidapi`
 
-### ACT Policy Training
+### Policy Training
 
-Train an Action Chunking Transformer (ACT) policy on collected demonstration data using LeRobot:
+Train robot learning policies (ACT, Diffusion, PI0, etc.) on collected demonstration data using LeRobot:
 
 ```bash
-# Basic training (state-only)
-python -m sir.training.train_act \
-  --repo-id lift_demos \
-  --root ./data
-
-# Training with vision (cameras detected from dataset)
-python -m sir.training.train_act \
-  --repo-id lift_vision_demos \
+# Train ACT policy (default)
+python -m sir.training.train_policy \
+  --repo-ids lift_demos \
   --root ./data \
-  --env Lift \
-  --robot Panda
+  --policy act
+
+# Train Diffusion policy
+python -m sir.training.train_policy \
+  --repo-ids lift_demos \
+  --root ./data \
+  --policy diffusion
+
+# Train PI0 policy
+python -m sir.training.train_policy \
+  --repo-ids lift_demos \
+  --root ./data \
+  --policy pi0
+
+# Training with multiple datasets (BC + DAgger)
+python -m sir.training.train_policy \
+  --repo-ids "lift_demos,lift_dagger" \
+  --root ./data \
+  --policy act
 
 # Training with custom hyperparameters
-python -m sir.training.train_act \
-  --repo-id my_demos \
+python -m sir.training.train_policy \
+  --repo-ids my_demos \
   --root ./data \
+  --policy diffusion \
   --batch-size 32 \
-  --lr 1e-5 \
+  --lr 1e-4 \
   --training-steps 20000 \
   --eval-freq 1000 \
-  --chunk-size 20
+  --action-chunk-size 16
 
 # Training with Weights & Biases logging and video saving
-python -m sir.training.train_act \
-  --repo-id my_demos \
+python -m sir.training.train_policy \
+  --repo-ids my_demos \
   --root ./data \
+  --policy act \
   --use-wandb \
-  --wandb-project act-training \
+  --wandb-project robot-training \
   --save-video
 
 # Enable visual aids in evaluation environment (disabled by default)
-python -m sir.training.train_act \
-  --repo-id my_demos \
+python -m sir.training.train_policy \
+  --repo-ids my_demos \
   --root ./data \
+  --policy act \
   --visual-aids
 ```
+
+**Supported Policies:**
+- `act` - Action Chunking Transformer (default)
+- `diffusion` - Diffusion Policy
+- `pi0` - Physical Intelligence Pi0
+- `pi05` - Pi0.5
+- `vqbet` - VQ-BeT
+- `tdmpc` - TD-MPC
+- `sac` - Soft Actor-Critic
+- `smolvla` - SmolVLA
 
 **Visual Aids in Evaluation:**
 - **Default: DISABLED** - Visual aids are turned off by default in the evaluation environment for cleaner observations
@@ -221,6 +246,9 @@ python -m sir.training.train_act \
 - Keeps evaluation observations consistent with training data (which should be collected without visual aids)
 
 **Key Features:**
+- **Multi-policy support** - train any LeRobot policy with a single `--policy` argument
+- **Multi-dataset support** - automatically combines multiple datasets (e.g., BC + DAgger)
+- **DAgger filtering** - automatically filters DAgger datasets to successful human corrections
 - Automatically detects camera observations from dataset (state-only or vision-based)
 - Configures evaluation environment to match training data (camera resolution, robot type)
 - Periodic evaluation and checkpoint saving during training

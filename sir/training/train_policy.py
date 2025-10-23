@@ -1,31 +1,34 @@
 #!/usr/bin/env python3
 """
-Simple training script for ACT (Action Chunking Transformer) policy using LeRobot.
+General training script for robot learning policies using LeRobot.
 
-This script:
+This script supports multiple policy types (ACT, Diffusion, PI0, etc.) and:
 1. Loads one or more LeRobotDatasets from local storage
 2. Automatically filters DAgger datasets to include only successful human corrections
 3. Combines multiple datasets on-the-fly for training
-4. Creates an ACT policy
+4. Creates a policy of the specified type
 5. Trains with supervised behavioral cloning (BC) loss
 6. Evaluates in the environment at regular intervals
 
-Usage (single dataset from HuggingFace Hub):
+Usage (single dataset with ACT policy):
     python -m sir.training.train_act \
-        --repo-ids ankile/square-v1
+        --repo-ids ankile/square-v1 \
+        --policy act
 
-Usage (multiple datasets - BC + DAgger from HuggingFace Hub):
-    python -m sir.training.train_act \
-        --repo-ids "ankile/square-v1,ankile/square-dagger-v1"
-
-Usage (with local datasets):
+Usage (multiple datasets with Diffusion policy):
     python -m sir.training.train_act \
         --repo-ids "ankile/square-v1,ankile/square-dagger-v1" \
-        --root ./data
+        --policy diffusion
+
+Usage (with PI0 policy):
+    python -m sir.training.train_act \
+        --repo-ids ankile/square-v1 \
+        --policy pi0
 
 Example with custom parameters:
     python -m sir.training.train_act \
         --repo-ids "ankile/square-v1,ankile/square-dagger-v1" \
+        --policy act \
         --batch-size 32 \
         --lr 1e-5 \
         --training-steps 20000 \
@@ -34,12 +37,14 @@ Example with custom parameters:
 Example with Weights & Biases logging and video saving:
     python -m sir.training.train_act \
         --repo-ids "ankile/square-v1,ankile/square-dagger-v1" \
+        --policy diffusion \
         --use-wandb \
-        --wandb-project act-dagger-training \
-        --wandb-run-name square_bc_plus_dagger_v1 \
+        --wandb-project robot-training \
+        --wandb-run-name square_diffusion_v1 \
         --save-video
 
 Note:
+- Supported policies: act, diffusion, pi0, pi05, vqbet, tdmpc, sac, smolvla
 - Datasets are automatically downloaded from HuggingFace Hub if --root is not specified.
 - Camera observations are automatically detected from the dataset/policy.
   The script will configure the evaluation environment to match.
@@ -78,9 +83,12 @@ from lerobot.datasets.lerobot_dataset import (
     MultiLeRobotDataset,
 )
 from lerobot.datasets.utils import dataset_to_policy_features
-from lerobot.policies.act.configuration_act import ACTConfig
-from lerobot.policies.act.modeling_act import ACTPolicy
-from lerobot.policies.factory import make_pre_post_processors
+from lerobot.policies.factory import (
+    get_policy_class,
+    make_policy_config,
+    make_pre_post_processors,
+)
+from lerobot.policies.pretrained import PreTrainedPolicy
 from robosuite import load_composite_controller_config
 from robosuite.wrappers import VisualizationWrapper
 from torch.utils.data import DataLoader
@@ -98,7 +106,16 @@ if platform.system() == "Darwin":
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Train ACT policy with LeRobot")
+    parser = argparse.ArgumentParser(description="Train robot learning policies with LeRobot")
+
+    # Policy args
+    parser.add_argument(
+        "--policy",
+        type=str,
+        default="act",
+        choices=["act", "diffusion", "pi0", "pi05", "vqbet", "tdmpc", "sac", "smolvla"],
+        help="Policy type to train (default: act)",
+    )
 
     # Dataset args
     parser.add_argument(
@@ -124,7 +141,7 @@ def parse_args():
     # Training args
     parser.add_argument("--batch-size", type=int, default=16, help="Batch size for training")
     parser.add_argument(
-        "--lr", type=float, default=1e-5, help="Learning rate (default: 1e-5, ACT default)"
+        "--lr", type=float, default=None, help="Learning rate (default: policy-specific default)"
     )
     parser.add_argument(
         "--training-steps",
@@ -145,18 +162,22 @@ def parse_args():
         "--max-steps", type=int, default=400, help="Maximum steps per episode during evaluation"
     )
 
-    # ACT policy args
+    # Policy-specific args (with sensible defaults that work for most policies)
     parser.add_argument(
-        "--chunk-size", type=int, default=20, help="Action chunk size for ACT (default: 20)"
+        "--action-chunk-size",
+        type=int,
+        default=None,
+        help="Action chunk/horizon size (default: policy-specific default). "
+        "Maps to 'chunk_size' for ACT/PI0 or 'horizon' for Diffusion",
     )
     parser.add_argument(
-        "--n-obs-steps", type=int, default=1, help="Number of observation steps (default: 1)"
+        "--n-obs-steps", type=int, default=None, help="Number of observation steps (default: policy-specific default)"
     )
     parser.add_argument(
         "--n-action-steps",
         type=int,
-        default=20,
-        help="Number of action steps to execute per chunk (default: 20)",
+        default=None,
+        help="Number of action steps to execute per chunk (default: policy-specific default)",
     )
 
     # System args
@@ -301,7 +322,7 @@ def create_robosuite_env(
 
 
 def evaluate_policy(
-    policy: ACTPolicy,
+    policy: PreTrainedPolicy,
     preprocessor: Any,
     action_stats: Dict[str, Any],
     env: RobosuiteRenderWrapper,
@@ -316,7 +337,7 @@ def evaluate_policy(
     Evaluate the policy in the environment.
 
     Args:
-        policy: ACT policy
+        policy: Robot learning policy (ACT, Diffusion, PI0, etc.)
         preprocessor: Preprocessor for normalizing observations
         action_stats: Action statistics from dataset (for denormalization)
         env: Robosuite environment
@@ -363,6 +384,8 @@ def evaluate_policy(
         action_std = torch.tensor(action_stats["std"], device=device, dtype=torch.float32)
 
     for ep in range(num_episodes):
+        print(f"  Episode {ep + 1}/{num_episodes}", end="", flush=True)
+
         obs = env.reset()
         policy.reset()  # Reset action queue
         episode_reward = 0
@@ -434,9 +457,14 @@ def evaluate_policy(
         else:
             # Episode ended by max_steps
             successes.append(0.0)
+            is_success = False
 
         total_rewards.append(episode_reward)
         episode_lengths.append(episode_length)
+
+        # Print episode result
+        status = "✓ SUCCESS" if is_success else "✗ FAILURE"
+        print(f" - {status} (reward: {episode_reward:.2f}, length: {episode_length})")
 
         # Add episode frames to all_frames and reset episode buffer
         if save_video and episode_frames is not None and all_frames is not None:
@@ -444,6 +472,9 @@ def evaluate_policy(
             episode_frames = []
 
     policy.train()
+
+    # Print summary after all episodes
+    print()  # Blank line for readability
 
     metrics = {
         "success_rate": np.mean(successes) * 100,
@@ -559,16 +590,14 @@ def train(args):
     repo_ids = [rid.strip() for rid in args.repo_ids.split(",")]
 
     print("=" * 60)
-    print("Training ACT Policy with LeRobot")
+    print(f"Training {args.policy.upper()} Policy with LeRobot")
     print("=" * 60)
+    print(f"Policy: {args.policy}")
     print(f"Datasets: {', '.join(repo_ids)}")
     print(f"Root: {args.root if args.root else 'HuggingFace Hub (default cache)'}")
     print(f"Environment: {args.env} ({args.robot})")
     print(f"Device: {args.device}")
     print(f"Batch size: {args.batch_size}")
-    print(f"Learning rate: {args.lr}")
-    print(f"Training steps: {args.training_steps}")
-    print(f"Action chunk size: {args.chunk_size}")
     print("=" * 60)
     print()
 
@@ -598,6 +627,8 @@ def train(args):
 
     # Initialize Weights & Biases with dataset metadata
     config = {
+        # Policy config
+        "policy/type": args.policy,
         # Dataset config
         "dataset/repo_ids": repo_ids,
         "dataset/root": args.root,
@@ -606,15 +637,10 @@ def train(args):
         "environment/robot": args.robot,
         # Training config
         "training/batch_size": args.batch_size,
-        "training/lr": args.lr,
         "training/training_steps": args.training_steps,
         "training/eval_freq": args.eval_freq,
         "training/eval_episodes": args.eval_episodes,
         "training/max_steps": args.max_steps,
-        # Policy config
-        "policy/chunk_size": args.chunk_size,
-        "policy/n_obs_steps": args.n_obs_steps,
-        "policy/n_action_steps": args.n_action_steps,
         # System config
         "system/device": args.device,
         "system/num_workers": args.num_workers,
@@ -661,41 +687,99 @@ def train(args):
         print(f"  {key}: shape={ft.shape}, type={ft.type}")
     print()
 
-    # Create ACT policy configuration
-    # Note: ACT automatically detects image features from input_features based on FeatureType.VISUAL
-    print("Creating ACT policy...")
-    config = ACTConfig(
-        input_features=input_features,
-        output_features=output_features,
-        chunk_size=args.chunk_size,
-        n_obs_steps=args.n_obs_steps,
-        n_action_steps=args.n_action_steps,
-        optimizer_lr=args.lr,
-    )
+    # Create policy configuration with policy-specific parameters
+    print(f"Creating {args.policy.upper()} policy...")
 
-    # Create policy
-    policy = ACTPolicy(config)
+    # Build policy config kwargs
+    policy_kwargs = {
+        "input_features": input_features,
+        "output_features": output_features,
+        "device": args.device,
+    }
+
+    # Add learning rate if specified
+    if args.lr is not None:
+        policy_kwargs["optimizer_lr"] = args.lr
+
+    # Add policy-specific parameters based on policy type
+    if args.policy in ["act", "pi0", "pi05", "vqbet"]:
+        # These policies use "chunk_size"
+        if args.action_chunk_size is not None:
+            policy_kwargs["chunk_size"] = args.action_chunk_size
+        if args.n_obs_steps is not None:
+            policy_kwargs["n_obs_steps"] = args.n_obs_steps
+        if args.n_action_steps is not None:
+            policy_kwargs["n_action_steps"] = args.n_action_steps
+    elif args.policy == "diffusion":
+        # Diffusion uses "horizon" instead of "chunk_size"
+        if args.action_chunk_size is not None:
+            policy_kwargs["horizon"] = args.action_chunk_size
+        if args.n_obs_steps is not None:
+            policy_kwargs["n_obs_steps"] = args.n_obs_steps
+        if args.n_action_steps is not None:
+            policy_kwargs["n_action_steps"] = args.n_action_steps
+
+    # Create policy config using factory
+    policy_config = make_policy_config(args.policy, **policy_kwargs)
+
+    # Get policy class and instantiate
+    policy_class = get_policy_class(args.policy)
+    policy = policy_class(policy_config)
     policy.train()
     policy.to(args.device)
-    print(f"✓ ACT policy created")
+    print(f"✓ {args.policy.upper()} policy created")
     print(f"  Parameters: {sum(p.numel() for p in policy.parameters()):,}")
+
+    # Print policy-specific config values
+    if hasattr(policy_config, "chunk_size"):
+        print(f"  Chunk size: {policy_config.chunk_size}")
+    elif hasattr(policy_config, "horizon"):
+        print(f"  Horizon: {policy_config.horizon}")
+    if hasattr(policy_config, "n_obs_steps"):
+        print(f"  Observation steps: {policy_config.n_obs_steps}")
+    if hasattr(policy_config, "n_action_steps"):
+        print(f"  Action steps: {policy_config.n_action_steps}")
+    print(f"  Learning rate: {policy_config.optimizer_lr}")
     print()
+
+    # Update wandb config with actual policy parameters
+    config["policy/learning_rate"] = policy_config.optimizer_lr
+    if hasattr(policy_config, "chunk_size"):
+        config["policy/chunk_size"] = policy_config.chunk_size
+    elif hasattr(policy_config, "horizon"):
+        config["policy/horizon"] = policy_config.horizon
+    if hasattr(policy_config, "n_obs_steps"):
+        config["policy/n_obs_steps"] = policy_config.n_obs_steps
+    if hasattr(policy_config, "n_action_steps"):
+        config["policy/n_action_steps"] = policy_config.n_action_steps
 
     # Create pre/post processors for normalization
     preprocessor, postprocessor = make_pre_post_processors(
-        config, dataset_stats=dataset_metadata.stats
+        policy_config, dataset_stats=dataset_metadata.stats
     )
 
-    # Setup delta timestamps for temporal data
-    # ACT default: single observation step, multiple action steps
-    delta_timestamps = {
-        "action": [i / fps for i in range(args.chunk_size)],  # Chunk of future actions
-    }
+    # Setup delta timestamps for temporal data using policy's delta indices
+    delta_timestamps = {}
 
-    # Add observation keys based on what's in the dataset
-    for key in input_features.keys():
-        if key.startswith("observation."):
-            delta_timestamps[key] = [0.0]  # Current observation only
+    # Get action delta indices from policy config
+    if hasattr(policy_config, "action_delta_indices") and policy_config.action_delta_indices is not None:
+        delta_timestamps["action"] = [i / fps for i in policy_config.action_delta_indices]
+    else:
+        # Fallback: use chunk_size or horizon
+        action_horizon = getattr(policy_config, "chunk_size", getattr(policy_config, "horizon", 20))
+        delta_timestamps["action"] = [i / fps for i in range(action_horizon)]
+
+    # Get observation delta indices from policy config
+    if hasattr(policy_config, "observation_delta_indices") and policy_config.observation_delta_indices is not None:
+        # Use policy-specific observation deltas for all observation keys
+        for key in input_features.keys():
+            if key.startswith("observation."):
+                delta_timestamps[key] = [i / fps for i in policy_config.observation_delta_indices]
+    else:
+        # Fallback: current observation only
+        for key in input_features.keys():
+            if key.startswith("observation."):
+                delta_timestamps[key] = [0.0]
 
     print("Delta timestamps configuration:")
     for key, timestamps in delta_timestamps.items():
@@ -731,8 +815,11 @@ def train(args):
         drop_last=True,  # Drop last incomplete batch
     )
 
-    # Create optimizer (use policy's get_optim_params for proper param groups)
-    optimizer = torch.optim.AdamW(policy.get_optim_params(), lr=args.lr)
+    # Create optimizer (use policy's get_optim_params for proper param groups if available)
+    if hasattr(policy, "get_optim_params"):
+        optimizer = torch.optim.AdamW(policy.get_optim_params(), lr=policy_config.optimizer_lr)
+    else:
+        optimizer = torch.optim.AdamW(policy.parameters(), lr=policy_config.optimizer_lr)
 
     # Detect camera names and resolution from dataset features
     camera_names = []
@@ -777,9 +864,9 @@ def train(args):
     print()
 
     # Create checkpoint directory
-    # Use combined dataset name for checkpoint directory
+    # Use combined dataset name and policy type for checkpoint directory
     combined_name = "+".join([rid.split("/")[-1] for rid in repo_ids])
-    checkpoint_dir = Path(args.checkpoint_dir) / combined_name
+    checkpoint_dir = Path(args.checkpoint_dir) / f"{args.policy}_{combined_name}"
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     print(f"Checkpoints will be saved to: {checkpoint_dir}")
     print()
@@ -804,15 +891,17 @@ def train(args):
                 if isinstance(batch[key], torch.Tensor):
                     batch[key] = batch[key].to(args.device)
 
-            # Remove temporal dimension from observations (n_obs_steps=1)
-            # ACT expects observations without temporal dimension when using single observation step
-            for key in list(batch.keys()):
-                if key.startswith("observation.") and not key.endswith("_is_pad"):
-                    if isinstance(batch[key], torch.Tensor) and batch[key].shape[1] == 1:
-                        # Squeeze out the temporal dimension (dim=1)
-                        batch[key] = batch[key].squeeze(1)
+            # Remove temporal dimension from observations if needed (for policies with n_obs_steps=1)
+            # Some policies expect observations without temporal dimension when using single observation step
+            if hasattr(policy_config, "n_obs_steps") and policy_config.n_obs_steps == 1:
+                for key in list(batch.keys()):
+                    if key.startswith("observation.") and not key.endswith("_is_pad"):
+                        if isinstance(batch[key], torch.Tensor) and batch[key].shape[1] == 1:
+                            # Squeeze out the temporal dimension (dim=1)
+                            batch[key] = batch[key].squeeze(1)
 
-            # Forward pass (returns loss and loss dict)
+            # Forward pass (returns loss and optional loss dict)
+            # Some policies (ACT) return (loss, loss_dict), others (Diffusion) return (loss, None)
             loss, loss_dict = policy.forward(batch)
 
             # Backward pass
@@ -823,10 +912,11 @@ def train(args):
             # Logging
             if step % 100 == 0:
                 loss_str = f"step: {step}/{args.training_steps} loss: {loss.item():.4f}"
-                if "l1_loss" in loss_dict:
-                    loss_str += f" l1: {loss_dict['l1_loss']:.4f}"
-                if "kl_loss" in loss_dict:
-                    loss_str += f" kl: {loss_dict['kl_loss']:.4f}"
+                if loss_dict is not None:
+                    if "l1_loss" in loss_dict:
+                        loss_str += f" l1: {loss_dict['l1_loss']:.4f}"
+                    if "kl_loss" in loss_dict:
+                        loss_str += f" kl: {loss_dict['kl_loss']:.4f}"
                 print(loss_str)
 
                 # Log to wandb
@@ -835,10 +925,11 @@ def train(args):
                         "train/loss": loss.item(),
                         "train/step": step,
                     }
-                    if "l1_loss" in loss_dict:
-                        wandb_log["train/l1_loss"] = loss_dict["l1_loss"]
-                    if "kl_loss" in loss_dict:
-                        wandb_log["train/kl_loss"] = loss_dict["kl_loss"]
+                    if loss_dict is not None:
+                        if "l1_loss" in loss_dict:
+                            wandb_log["train/l1_loss"] = loss_dict["l1_loss"]
+                        if "kl_loss" in loss_dict:
+                            wandb_log["train/kl_loss"] = loss_dict["kl_loss"]
                     wandb.log(wandb_log, step=step)
 
             # Evaluation
@@ -912,11 +1003,11 @@ def train(args):
                             ]
                             metadata[f"dataset_{i}_revision"] = dataset_info[repo_id]["revision"]
 
-                        artifact_name = f"act-{combined_name}-best-step-{step}"
+                        artifact_name = f"{args.policy}-{combined_name}-best-step-{step}"
                         upload_checkpoint_to_wandb(
                             checkpoint_path=checkpoint_path,
                             artifact_name=artifact_name,
-                            description=f"Best ACT policy trained on {', '.join(repo_ids)} (success: {best_success_rate:.1f}%, step: {step})",
+                            description=f"Best {args.policy.upper()} policy trained on {', '.join(repo_ids)} (success: {best_success_rate:.1f}%, step: {step})",
                             metadata=metadata,
                         )
                     print()
@@ -931,7 +1022,7 @@ def train(args):
 
                 # Upload to W&B for version control
                 if args.use_wandb:
-                    artifact_name = f"act-{combined_name}-checkpoint-step-{step}"
+                    artifact_name = f"{args.policy}-{combined_name}-checkpoint-step-{step}"
                     checkpoint_metadata = {"step": step, "combined_name": combined_name}
                     # Add dataset info
                     for i, repo_id in enumerate(repo_ids):
@@ -946,7 +1037,7 @@ def train(args):
                     upload_checkpoint_to_wandb(
                         checkpoint_path=checkpoint_path,
                         artifact_name=artifact_name,
-                        description=f"ACT policy checkpoint at step {step}",
+                        description=f"{args.policy.upper()} policy checkpoint at step {step}",
                         metadata=checkpoint_metadata,
                     )
                 print()
@@ -979,11 +1070,11 @@ def train(args):
             metadata[f"dataset_{i}_episodes"] = dataset_info[repo_id]["used_episodes"]
             metadata[f"dataset_{i}_revision"] = dataset_info[repo_id]["revision"]
 
-        artifact_name = f"act-{combined_name}-final"
+        artifact_name = f"{args.policy}-{combined_name}-final"
         upload_checkpoint_to_wandb(
             checkpoint_path=checkpoint_path,
             artifact_name=artifact_name,
-            description=f"Final ACT policy trained on {', '.join(repo_ids)} after {step} steps (success: {metrics['success_rate']:.1f}%)",
+            description=f"Final {args.policy.upper()} policy trained on {', '.join(repo_ids)} after {step} steps (success: {metrics['success_rate']:.1f}%)",
             metadata=metadata,
         )
 
