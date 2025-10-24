@@ -4,7 +4,7 @@ python -m sir.training.train_policy \
         --save-video \
         --env NutAssemblySquare \
         --max-steps 800 \
-        --batch-size 128 \
+        --batch-size 64 \
         --training-steps 100000 \
         --eval-freq 5000 \
         --eval-episodes 20 \
