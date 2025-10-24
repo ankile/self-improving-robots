@@ -6,7 +6,15 @@ This script enables human-in-the-loop data collection for iterative policy impro
 2. Runs the policy autonomously (policy rollout)
 3. Allows human to intervene when policy fails (press 'h')
 4. Human corrects using SpaceMouse teleoperation
-5. Saves both policy and human trajectories with appropriate labels
+5. Human can switch control back to policy (press 'h' again)
+6. Multiple switches per episode allowed - human guides policy through difficult states
+7. Saves both policy and human trajectories with appropriate labels
+
+Episode Lifecycle:
+- Environment reset once at episode start
+- Control switches between policy and human as needed (no resets during switches)
+- Episode ends when user presses '1' (success) or '0' (discard)
+- Policy action queue reset each time policy takes control
 
 Dataset Structure:
 - Original demo dataset: Kept intact (e.g., "square-v1")
@@ -55,6 +63,7 @@ Usage:
 Controls:
     During policy rollout:
     - 'h' key: Trigger human intervention (policy failed, switch to spacemouse)
+    - '0' key: Abort episode (discard all data and end)
     - With --auto-save-on-success: Successful episodes save automatically (no intervention needed)
 
     During spacemouse mode:
@@ -62,10 +71,10 @@ Controls:
     - Left button: Toggle gripper
     - 'h' key: Save teleoperation data and switch back to POLICY control
     - '1' key: Mark correction as SUCCESS and end episode
-    - '0' key: Discard correction and end episode
+    - '0' key: Abort episode (discard all data and end)
 
     Note: You can switch between policy and teleoperation multiple times within a single
-    episode by pressing 'h' during teleoperation to return control to the policy.
+    episode by pressing 'h'. Press '0' at any time to abort and discard the entire episode.
 
     Between episodes:
     - 'n' key: Start next episode
@@ -354,23 +363,30 @@ def policy_rollout_episode(
     max_fr: int = 20,
     has_renderer: bool = True,
     auto_save_on_success: bool = False,
-) -> Tuple[Optional[Dict], bool, bool]:
+) -> Tuple[Optional[Dict], str, bool]:
     """
-    Run policy rollout with option for human intervention.
+    Run policy rollout from current environment state.
+
+    NOTE: This function does NOT reset the environment. The caller is responsible
+    for resetting the environment at episode boundaries.
 
     Args:
         auto_save_on_success: Automatically end episode and save when task success is detected
 
     Returns:
-        Tuple of (episode_data, intervention_triggered, task_success)
+        Tuple of (episode_data, action, task_success)
         - episode_data: Dict with observations, actions, etc. (None if no data)
-        - intervention_triggered: True if user pressed 'h' to intervene
-        - task_success: True if task completed successfully before intervention
+        - action: "intervention" (user pressed 'h'), "complete" (finished naturally), or "discard" (user pressed '0')
+        - task_success: True if task completed successfully
     """
-    obs = env.reset()
+    # Get current observation from environment (don't reset)
+    obs = env._get_observations()
+
     if has_renderer:
         env.render()
 
+    # Reset policy state (clears action chunk queue)
+    # Critical for starting fresh policy rollout after teleoperation
     policy.reset()
 
     # Storage for episode data
@@ -398,31 +414,35 @@ def policy_rollout_episode(
     print("\n" + "=" * 60)
     print("POLICY ROLLOUT MODE")
     print("=" * 60)
-    print("Policy is controlling the robot...")
+    print("Policy is controlling the robot (action queue reset)...")
     if auto_save_on_success:
         print("Auto-save ENABLED: Episode will save automatically when task success is detected")
         print("Press 'h' for manual INTERVENTION (if needed)")
     else:
         print("Press 'h' to trigger human INTERVENTION")
+    print("Press '0' to ABORT episode")
     print("=" * 60)
     print()
 
     step_count = 0
-    intervention_triggered = False
     task_success = False
     success_announced = False  # Track if we've announced task success
 
     for step_count in range(max_steps):
         start = time.time()
 
-        # Check for intervention signal
+        # Check for user input
         key = kbd_listener.read_key()
         if key == "h":
             print("\n" + "!" * 60)
             print("HUMAN INTERVENTION TRIGGERED")
             print("!" * 60)
-            intervention_triggered = True
-            break
+            return episode_data, "intervention", task_success
+        elif key == "0":
+            print("\n" + "=" * 60)
+            print("EPISODE ABORTED by user")
+            print("=" * 60)
+            return None, "discard", False
 
         # Extract state observation
         state_keys = ["robot0_eef_pos", "robot0_eef_quat", "robot0_gripper_qpos"]
@@ -479,7 +499,7 @@ def policy_rollout_episode(
                     print(f"POLICY SUCCEEDED! Task completed in {step_count + 1} steps")
                     print("=" * 60)
                     print()
-                    # Store this final step before breaking
+                    # Store this final step before returning
                     episode_data["observations"].append(state.copy())
                     episode_data["actions"].append(action.copy())
                     episode_data["rewards"].append(reward)
@@ -487,7 +507,7 @@ def policy_rollout_episode(
                     for cam_key in camera_keys:
                         if cam_key in obs:
                             episode_data[cam_key].append(obs[cam_key].copy())
-                    break
+                    return episode_data, "complete", True
 
         # Store data
         episode_data["observations"].append(state.copy())
@@ -510,9 +530,9 @@ def policy_rollout_episode(
     print(f"\nPolicy rollout ended: {step_count + 1} steps collected")
 
     if len(episode_data["actions"]) == 0:
-        return None, intervention_triggered, task_success
+        return None, "complete", task_success
 
-    return episode_data, intervention_triggered, task_success
+    return episode_data, "complete", task_success
 
 
 def spacemouse_correction_episode(
@@ -527,7 +547,10 @@ def spacemouse_correction_episode(
     auto_save_on_success: bool = False,
 ) -> Tuple[Optional[Dict], str]:
     """
-    Collect human correction using SpaceMouse.
+    Collect human correction using SpaceMouse from current environment state.
+
+    NOTE: This function does NOT reset the environment. The caller is responsible
+    for resetting the environment at episode boundaries.
 
     Args:
         auto_save_on_success: Automatically save when task completion is detected
@@ -537,13 +560,27 @@ def spacemouse_correction_episode(
         - episode_data: Dict with trajectory data (None if discarded)
         - action: "continue" (switch back to policy), "success" (end episode), or "discard" (discard and end)
     """
-    # Get current observation (don't reset - continue from where policy left off)
+    # Get current observation from environment (don't reset)
     obs = env._get_observations()
     if has_renderer:
         env.render()
 
     device.start_control()
-    device.reset_gripper()
+
+    # Initialize SpaceMouse gripper state to match current robot gripper state
+    # This prevents the gripper from changing when switching control modes
+    if "robot0_gripper_qpos" in obs:
+        current_gripper_qpos = obs["robot0_gripper_qpos"]
+        # For Robosuite parallel jaw grippers:
+        # - Large qpos (e.g., ±0.04) = OPEN (fingers apart)
+        # - Small qpos (e.g., ~0.0) = CLOSED (fingers together)
+        gripper_is_closed = np.mean(np.abs(current_gripper_qpos)) < 0.02
+        device.gripper_closed = gripper_is_closed
+        print(f"Initialized gripper state: {'CLOSED' if gripper_is_closed else 'OPEN'} (qpos: {current_gripper_qpos})")
+    else:
+        # Fallback to open if gripper state not available
+        device.reset_gripper()
+        print("Warning: Could not read gripper state, defaulting to OPEN")
 
     # Storage for correction data
     episode_data = {
@@ -565,11 +602,11 @@ def spacemouse_correction_episode(
     if auto_save_on_success:
         print("Auto-save ENABLED: Episode will save automatically when task success is detected")
         print("Press 'h' to SAVE and switch back to POLICY control")
-        print("Press '0' to DISCARD and skip")
+        print("Press '0' to ABORT episode (discard all data)")
     else:
         print("Press 'h' to SAVE and switch back to POLICY control")
         print("Press '1' to mark as SUCCESS and end episode")
-        print("Press '0' to DISCARD and skip")
+        print("Press '0' to ABORT episode (discard all data)")
     print("=" * 60)
     print()
 
@@ -893,18 +930,27 @@ def main():
                 visual_aids=args.visual_aids,
             )
 
+            # Reset environment at start of episode
+            env.reset()
+            if not args.headless:
+                env.render()
+
             # Initialize dataset on first save (need task_name for this)
             task_name = f"{args.env}_{args.robot}"
 
             # Inner loop: Allow switching between policy and teleop within same episode
+            # Episode lifecycle:
+            #   - env.reset() called once at episode start (above)
+            #   - Loop switches control between policy and human
+            #   - Episode ends when user presses '1' (success) or '0' (discard)
             continue_episode = True
             segment_count = 0
 
             while continue_episode:
                 segment_count += 1
 
-                # Phase 1: Policy rollout
-                policy_data, intervention, task_success = policy_rollout_episode(
+                # Phase 1: Policy rollout from current state
+                policy_data, policy_action, task_success = policy_rollout_episode(
                     env=env,
                     policy=policy,
                     preprocessor=preprocessor,
@@ -990,9 +1036,14 @@ def main():
                     )
                     saved_policy_count += 1
 
-                # Phase 2: Human correction (if intervention was triggered)
-                if intervention:
-                    human_data, action = spacemouse_correction_episode(
+                # Handle policy action result
+                if policy_action == "discard":
+                    # User aborted during policy rollout
+                    continue_episode = False
+                    break
+                elif policy_action == "intervention":
+                    # Phase 2: Human correction (user pressed 'h' during policy rollout)
+                    human_data, teleop_action = spacemouse_correction_episode(
                         env=env,
                         device=spacemouse,
                         kbd_listener=kbd_listener,
@@ -1003,7 +1054,7 @@ def main():
                     )
 
                     # Save human correction if there's data and action is continue or success
-                    if human_data is not None and len(human_data["actions"]) > 0 and action in ["continue", "success"]:
+                    if human_data is not None and len(human_data["actions"]) > 0 and teleop_action in ["continue", "success"]:
                         save_episode_to_dataset(
                             dataset=dataset,
                             episode_data=human_data,
@@ -1015,7 +1066,7 @@ def main():
                         saved_human_count += 1
 
                     # Determine if we should continue the episode or end it
-                    if action == "continue":
+                    if teleop_action == "continue":
                         # Switch back to policy control - continue inner loop
                         print("\n" + ">" * 60)
                         print(f"Resuming POLICY control (segment {segment_count + 1})")
@@ -1026,7 +1077,7 @@ def main():
                         continue_episode = False
                         break
                 else:
-                    # No intervention - policy completed the episode
+                    # policy_action == "complete" - policy finished naturally (max steps or auto-save)
                     continue_episode = False
                     break
 
