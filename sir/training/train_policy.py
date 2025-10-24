@@ -635,35 +635,42 @@ def train(args):
         }
         print()
 
-    # Initialize Weights & Biases with dataset metadata
+    # Initialize Weights & Biases config with nested structure
     config = {
-        # Policy config
-        "policy/type": args.policy,
-        # Dataset config
-        "dataset/repo_ids": repo_ids,
-        "dataset/root": args.root,
-        # Environment config
-        "environment/env_name": args.env,
-        "environment/robot": args.robot,
-        # Training config
-        "training/batch_size": args.batch_size,
-        "training/training_steps": args.training_steps,
-        "training/eval_freq": args.eval_freq,
-        "training/eval_episodes": args.eval_episodes,
-        "training/max_steps": args.max_steps,
-        # System config
-        "system/device": args.device,
-        "system/num_workers": args.num_workers,
-        "system/checkpoint_dir": args.checkpoint_dir,
+        "policy": {
+            "type": args.policy,
+        },
+        "dataset": {
+            "repo_ids": repo_ids,
+            "root": args.root,
+        },
+        "environment": {
+            "env_name": args.env,
+            "robot": args.robot,
+        },
+        "training": {
+            "batch_size": args.batch_size,
+            "training_steps": args.training_steps,
+            "eval_freq": args.eval_freq,
+            "eval_episodes": args.eval_episodes,
+            "max_steps": args.max_steps,
+        },
+        "system": {
+            "device": args.device,
+            "num_workers": args.num_workers,
+            "checkpoint_dir": args.checkpoint_dir,
+        },
     }
 
     # Add dataset-specific metadata
     for repo_id, info in dataset_info.items():
         safe_name = repo_id.replace("/", "_")
-        config[f"dataset/{safe_name}/total_episodes"] = info["total_episodes"]
-        config[f"dataset/{safe_name}/used_episodes"] = info["used_episodes"]
-        config[f"dataset/{safe_name}/total_frames"] = info["total_frames"]
-        config[f"dataset/{safe_name}/revision"] = info["revision"]
+        config["dataset"][safe_name] = {
+            "total_episodes": info["total_episodes"],
+            "used_episodes": info["used_episodes"],
+            "total_frames": info["total_frames"],
+            "revision": info["revision"],
+        }
 
     # Load dataset metadata first to get features and stats (from first dataset)
     print("Loading dataset metadata...")
@@ -745,27 +752,8 @@ def train(args):
     print(f"  Learning rate: {policy_config.optimizer_lr}")
     print()
 
-    # Update wandb config with all policy parameters
-    # Convert policy config to dict and log all non-complex attributes
-    policy_config_dict = dataclasses.asdict(policy_config)
-
-    # Filter out complex objects that aren't easily serializable or are logged elsewhere
-    skip_keys = {"input_features", "output_features"}
-
-    for key, value in policy_config_dict.items():
-        if key not in skip_keys:
-            # Handle nested dicts and basic types
-            if isinstance(value, (int, float, str, bool, type(None))):
-                config[f"policy/{key}"] = value
-            elif isinstance(value, (list, tuple)) and all(
-                isinstance(v, (int, float, str, bool, type(None))) for v in value
-            ):
-                config[f"policy/{key}"] = value
-            elif isinstance(value, dict) and all(
-                isinstance(k, str) and isinstance(v, (int, float, str, bool, type(None)))
-                for k, v in value.items()
-            ):
-                config[f"policy/{key}"] = value
+    # Add all policy config parameters to config
+    config["policy"].update(dataclasses.asdict(policy_config))
 
     # Generate descriptive run name if not provided
     if args.wandb_run_name is None:
