@@ -24,6 +24,7 @@ python -m lerobot.scripts.lerobot_train \
     --dataset.repo_id=ankile/square-v1 \
     --policy.path=lerobot/pi0_base \
     --policy.use_amp=true \
+    --policy.push_to_hub=false \
     --output_dir=./outputs/train/pi0_square_demos_amp \
     --job_name=pi0-demos-amp \
     --batch_size=8 \
@@ -41,6 +42,8 @@ python -m lerobot.scripts.lerobot_train \
 #                This is a special argument that loads the full config (including type)
 #                and automatically sets pretrained_path. Use this, NOT --policy.pretrained_path!
 # --policy.use_amp: Enable automatic mixed precision (fp16/bf16) - REQUIRED for PI0!
+# --policy.push_to_hub: Set to false to disable auto-pushing to HuggingFace Hub
+#                       Default is true, which requires --policy.repo_id
 # --job_name: Sets the wandb run name (not --wandb.name!)
 # --batch_size: Start conservative at 8, can increase to 16-32 with AMP
 # --eval_freq: Set to 0 to disable evaluation (or very high like 1000000)
@@ -53,6 +56,7 @@ python -m lerobot.scripts.lerobot_train \
 # --use_policy_training_preset=true  # Use PI0's default optimizer/scheduler
 # --wandb.notes="Description of this run"  # Add notes to the wandb run
 #
-# Common mistake: Don't use --policy.pretrained_path directly, use --policy.path instead!
-# The .path argument is special and loads the full config from the pretrained model.
+# Common mistakes:
+# 1. Don't use --policy.pretrained_path directly, use --policy.path instead!
+# 2. Must set --policy.push_to_hub=false unless you want to push to HF Hub
 
