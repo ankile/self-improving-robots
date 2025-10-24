@@ -8,8 +8,8 @@ python -m sir.training.train_policy \
         --training-steps 100000 \
         --eval-freq 5000 \
         --eval-episodes 20 \
-        --action-chunk-size 20 \
-        --n-action-steps 20 \
+        --action-chunk-size 24 \
+        --n-action-steps 16 \
         --diffusion-down-dims 256,512,1024 \
         --use-wandb \
         --wandb-project square-dagger-comparison
