@@ -359,24 +359,32 @@ def policy_rollout_episode(
     kbd_listener: KeyboardListener,
     camera_names: list,
     device: str,
-    max_steps: int = 400,
+    max_steps: int = 400,  # Not used - kept for API compatibility
     max_fr: int = 20,
     has_renderer: bool = True,
     auto_save_on_success: bool = False,
 ) -> Tuple[Optional[Dict], str, bool]:
     """
-    Run policy rollout from current environment state.
+    Run policy rollout from current environment state indefinitely until manual intervention.
+
+    The policy continues running until:
+    - User presses 'h' for intervention
+    - User presses '0' to abort
+    - Task success is detected and auto_save_on_success is enabled
 
     NOTE: This function does NOT reset the environment. The caller is responsible
     for resetting the environment at episode boundaries.
 
+    NOTE: No timeout - policy runs indefinitely until manual action or auto-save on success.
+
     Args:
+        max_steps: Unused, kept for API compatibility
         auto_save_on_success: Automatically end episode and save when task success is detected
 
     Returns:
         Tuple of (episode_data, action, task_success)
         - episode_data: Dict with observations, actions, etc. (None if no data)
-        - action: "intervention" (user pressed 'h'), "complete" (finished naturally), or "discard" (user pressed '0')
+        - action: "intervention" (user pressed 'h'), "complete" (auto-save), or "discard" (user pressed '0')
         - task_success: True if task completed successfully
     """
     # Get current observation from environment (don't reset)
@@ -412,15 +420,17 @@ def policy_rollout_episode(
         action_std = torch.tensor(action_stats["std"], device=device, dtype=torch.float32)
 
     print("\n" + "=" * 60)
-    print("POLICY ROLLOUT MODE")
+    print("POLICY ROLLOUT MODE (no timeout)")
     print("=" * 60)
     print("Policy is controlling the robot (action queue reset)...")
+    print("Policy will run indefinitely until you take action:")
     if auto_save_on_success:
-        print("Auto-save ENABLED: Episode will save automatically when task success is detected")
-        print("Press 'h' for manual INTERVENTION (if needed)")
+        print("  • Auto-save ENABLED: Episode saves automatically on task success")
+        print("  • Press 'h' for manual INTERVENTION (if needed)")
+        print("  • Press '0' to ABORT episode")
     else:
-        print("Press 'h' to trigger human INTERVENTION")
-    print("Press '0' to ABORT episode")
+        print("  • Press 'h' to trigger human INTERVENTION")
+        print("  • Press '0' to ABORT episode")
     print("=" * 60)
     print()
 
@@ -428,7 +438,8 @@ def policy_rollout_episode(
     task_success = False
     success_announced = False  # Track if we've announced task success
 
-    for step_count in range(max_steps):
+    # Run policy indefinitely until manual intervention or task success
+    while True:
         start = time.time()
 
         # Check for user input
@@ -527,8 +538,11 @@ def policy_rollout_episode(
             if diff > 0:
                 time.sleep(diff)
 
-    print(f"\nPolicy rollout ended: {step_count + 1} steps collected")
+        # Increment step counter
+        step_count += 1
 
+    # This code is unreachable - policy rollout only ends via return statements above
+    # (intervention, discard, or auto-save on success)
     if len(episode_data["actions"]) == 0:
         return None, "complete", task_success
 
