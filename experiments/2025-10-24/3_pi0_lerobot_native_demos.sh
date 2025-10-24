@@ -22,10 +22,10 @@
 
 python -m lerobot.scripts.lerobot_train \
     --dataset.repo_id=ankile/square-v1 \
-    --policy.path=lerobot/pi0_base \
+    --policy.pretrained_path=lerobot/pi0_base \
     --policy.use_amp=true \
     --output_dir=./outputs/train/pi0_square_demos_amp \
-    --job_name=pi0_square_demos_amp \
+    --job_name=pi0-demos-amp \
     --batch_size=8 \
     --steps=100000 \
     --eval_freq=0 \
@@ -34,12 +34,12 @@ python -m lerobot.scripts.lerobot_train \
     --num_workers=4 \
     --seed=1000 \
     --wandb.enable=true \
-    --wandb.project=square-dagger-comparison \
-    --wandb.name=pi0-demos-amp
+    --wandb.project=square-dagger-comparison
 
 # Notes on parameters:
-# --policy.path: Loads pretrained PI0 weights from HuggingFace
-# --policy.use_amp: Enable automatic mixed precision (fp16/bf16)
+# --policy.pretrained_path: Loads pretrained PI0 weights from HuggingFace
+# --policy.use_amp: Enable automatic mixed precision (fp16/bf16) - REQUIRED for PI0!
+# --job_name: Sets the wandb run name (not --wandb.name!)
 # --batch_size: Start conservative at 8, can increase to 16-32 with AMP
 # --eval_freq: Set to 0 to disable evaluation (or very high like 1000000)
 # --save_freq: Save checkpoint every 5000 steps
@@ -49,4 +49,5 @@ python -m lerobot.scripts.lerobot_train \
 # --policy.device=cuda  # Explicit device selection
 # --save_checkpoint=true  # Already true by default
 # --use_policy_training_preset=true  # Use PI0's default optimizer/scheduler
+# --wandb.notes="Description of this run"  # Add notes to the wandb run
 
