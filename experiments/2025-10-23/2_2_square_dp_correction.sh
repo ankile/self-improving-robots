@@ -5,4 +5,5 @@ python -m sir.training.train_policy \
         --env NutAssemblySquare \
         --max-steps 600 \
         --batch-size 128 \
-        --use-wandb
+        --use-wandb \
+        --wandb-project square-dagger-comparison

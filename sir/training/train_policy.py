@@ -654,10 +654,16 @@ def train(args):
     if args.wandb_run_name is None:
         # Extract short dataset names (e.g., "square-v1" from "ankile/square-v1")
         dataset_names = [rid.split("/")[-1] for rid in repo_ids]
-        datasets_str = "+".join(dataset_names)
 
-        # Create descriptive name: policy-env-datasets
-        run_name = f"{args.policy}-{args.env}-{datasets_str}"
+        # Check if any dataset includes dagger corrections
+        has_dagger = any("dagger" in name.lower() for name in dataset_names)
+        data_type = "dagger" if has_dagger else "demos"
+
+        # Policy shorthand
+        policy_short = "dp" if args.policy == "diffusion" else args.policy
+
+        # Create concise run name: policy-datatype
+        run_name = f"{policy_short}-{data_type}"
     else:
         run_name = args.wandb_run_name
 
