@@ -1,0 +1,14 @@
+python -m sir.training.train_policy \
+        --repo-ids ankile/square-v1 \
+        --policy pi0 \
+        --save-video \
+        --env NutAssemblySquare \
+        --max-steps 800 \
+        --batch-size 128 \
+        --training-steps 100000 \
+        --eval-freq 5000 \
+        --eval-episodes 20 \
+        --action-chunk-size 20 \
+        --n-action-steps 20 \
+        --use-wandb \
+        --wandb-project square-dagger-comparison
