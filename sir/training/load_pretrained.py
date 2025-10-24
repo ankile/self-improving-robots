@@ -79,9 +79,19 @@ def load_policy_from_checkpoint(
 
     # Load preprocessor and postprocessor with saved statistics
     logger.info("Loading preprocessor and postprocessor...")
+    # Override device in processor pipelines to match target device
+    # This is important when loading checkpoints trained on different hardware (e.g., CUDA -> MPS)
+    device_overrides = {
+        "device_processor": {
+            "device": device
+        }
+    }
+    logger.info(f"Overriding processor device to: {device}")
     preprocessor, postprocessor = make_pre_post_processors(
         policy.config,
         pretrained_path=str(checkpoint_path),  # Load saved processors with stats
+        preprocessor_overrides=device_overrides,
+        postprocessor_overrides=device_overrides,
     )
 
     logger.info(f"✓ Policy loaded successfully from {checkpoint_path}")

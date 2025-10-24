@@ -182,6 +182,14 @@ cd "$BASE_DIR"
 echo "✓ lerobot installed"
 echo ""
 
+# Step 6.5: Install Pi0 dependencies
+echo "Step 5.5: Installing Pi0 dependencies..."
+cd "$BASE_DIR/lerobot"
+pip install -e ".[pi]"
+cd "$BASE_DIR"
+echo "✓ Pi0 dependencies installed (includes special transformers branch with PaliGemma)"
+echo ""
+
 # Step 7: Install robosuite (optional but recommended)
 echo "Step 6: Installing robosuite..."
 cd "$BASE_DIR/robosuite"

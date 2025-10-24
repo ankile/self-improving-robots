@@ -1,6 +1,7 @@
 python -m sir.training.train_policy \
         --repo-ids ankile/square-v1 \
         --policy pi0 \
+        --pretrained-path lerobot/pi0_base \
         --save-video \
         --env NutAssemblySquare \
         --max-steps 800 \

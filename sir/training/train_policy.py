@@ -198,6 +198,13 @@ def parse_args():
         "Only used by Diffusion policy. Default: (84,84) which may be too small for ManiSkill's 128x128 images. "
         "Use '128,128' to disable cropping for ManiSkill environments.",
     )
+    parser.add_argument(
+        "--pretrained-path",
+        type=str,
+        default=None,
+        help="Path to pretrained model to finetune (e.g., 'lerobot/pi0_base', 'lerobot/pi05_base'). "
+        "If not provided, trains from scratch. Required to leverage Physical Intelligence's pretrained weights for Pi0/Pi05.",
+    )
 
     # System args
     parser.add_argument(
@@ -745,10 +752,21 @@ def train(args):
 
     # Get policy class and instantiate
     policy_class = get_policy_class(args.policy)
-    policy = policy_class(policy_config)
+
+    # Load pretrained weights if specified
+    if args.pretrained_path:
+        print(f"Loading pretrained model from: {args.pretrained_path}")
+        policy = policy_class.from_pretrained(
+            args.pretrained_path,
+            config=policy_config,
+        )
+        print(f"✓ {args.policy.upper()} policy loaded from pretrained weights")
+    else:
+        policy = policy_class(policy_config)
+        print(f"✓ {args.policy.upper()} policy created from scratch")
+
     policy.train()
     policy.to(args.device)
-    print(f"✓ {args.policy.upper()} policy created")
     print(f"  Parameters: {sum(p.numel() for p in policy.parameters()):,}")
 
     # Print policy-specific config values

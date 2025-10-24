@@ -17,8 +17,11 @@ Dataset Structure:
 Label Meanings:
   - source=0, success=0: Policy failed (user intervened with 'h')
   - source=0, success=1: Policy succeeded (completed task without intervention)
-  - source=1, success=1: Human correction succeeded (user pressed '1')
+  - source=1, success=1: Human correction succeeded (saved when pressing 'h' or '1')
   - source=1, success=0: Not used (human corrections are only saved if marked success)
+
+Note: Episodes can contain multiple segments of policy and human data, as users can
+switch back and forth between policy and teleoperation control by pressing 'h'.
 
 Usage:
     # Basic DAgger collection for NutAssemblySquare
@@ -57,8 +60,12 @@ Controls:
     During spacemouse mode:
     - SpaceMouse: Control robot end-effector (6-DOF)
     - Left button: Toggle gripper
-    - '1' key: Mark correction as SUCCESS and save
-    - '0' key: Discard correction (no save)
+    - 'h' key: Save teleoperation data and switch back to POLICY control
+    - '1' key: Mark correction as SUCCESS and end episode
+    - '0' key: Discard correction and end episode
+
+    Note: You can switch between policy and teleoperation multiple times within a single
+    episode by pressing 'h' during teleoperation to return control to the policy.
 
     Between episodes:
     - 'n' key: Start next episode
@@ -518,7 +525,7 @@ def spacemouse_correction_episode(
     record_gripper_motion: bool = True,
     gripper_vel_threshold: float = 0.01,
     auto_save_on_success: bool = False,
-) -> Tuple[Optional[Dict], bool]:
+) -> Tuple[Optional[Dict], str]:
     """
     Collect human correction using SpaceMouse.
 
@@ -526,9 +533,9 @@ def spacemouse_correction_episode(
         auto_save_on_success: Automatically save when task completion is detected
 
     Returns:
-        Tuple of (episode_data, success)
+        Tuple of (episode_data, action)
         - episode_data: Dict with trajectory data (None if discarded)
-        - success: True if user marked as success (pressed '1' or auto-saved)
+        - action: "continue" (switch back to policy), "success" (end episode), or "discard" (discard and end)
     """
     # Get current observation (don't reset - continue from where policy left off)
     obs = env._get_observations()
@@ -557,9 +564,11 @@ def spacemouse_correction_episode(
     print("Use SpaceMouse to correct the robot's behavior")
     if auto_save_on_success:
         print("Auto-save ENABLED: Episode will save automatically when task success is detected")
+        print("Press 'h' to SAVE and switch back to POLICY control")
         print("Press '0' to DISCARD and skip")
     else:
-        print("Press '1' to mark as SUCCESS and save")
+        print("Press 'h' to SAVE and switch back to POLICY control")
+        print("Press '1' to mark as SUCCESS and end episode")
         print("Press '0' to DISCARD and skip")
     print("=" * 60)
     print()
@@ -575,16 +584,21 @@ def spacemouse_correction_episode(
 
         # Check for keyboard input
         key = kbd_listener.read_key()
-        if key == "1":
+        if key == "h":
+            print("\n" + "=" * 60)
+            print(f"Switching back to POLICY control ({step_count} steps of teleoperation saved)")
+            print("=" * 60)
+            return episode_data, "continue"
+        elif key == "1":
             print("\n" + "=" * 60)
             print(f"SUCCESS! Correction saved ({step_count} steps)")
             print("=" * 60)
-            return episode_data, True
+            return episode_data, "success"
         elif key == "0":
             print("\n" + "=" * 60)
             print(f"DISCARDED! Correction not saved ({step_count} steps)")
             print("=" * 60)
-            return None, False
+            return None, "discard"
 
         # Get SpaceMouse control
         control = device.control
@@ -650,7 +664,7 @@ def spacemouse_correction_episode(
                         for cam_key in camera_keys:
                             if cam_key in obs:
                                 episode_data[cam_key].append(obs[cam_key].copy())
-                    return episode_data, True
+                    return episode_data, "success"
 
         # Check gripper motion
         if gripper_is_moving and record_gripper_motion:
@@ -879,118 +893,142 @@ def main():
                 visual_aids=args.visual_aids,
             )
 
-            # Phase 1: Policy rollout
-            policy_data, intervention, task_success = policy_rollout_episode(
-                env=env,
-                policy=policy,
-                preprocessor=preprocessor,
-                postprocessor=postprocessor,
-                action_stats=action_stats,
-                kbd_listener=kbd_listener,
-                camera_names=camera_names,
-                device=args.device,
-                max_steps=args.max_steps,
-                max_fr=args.max_fr,
-                has_renderer=not args.headless,
-                auto_save_on_success=args.auto_save_on_success,
-            )
-
-            # Initialize dataset on first save
+            # Initialize dataset on first save (need task_name for this)
             task_name = f"{args.env}_{args.robot}"
 
-            if dataset is None and policy_data is not None:
-                if dataset_path.exists():
-                    print(f"Loading existing dataset from {dataset_path}")
-                    dataset = LeRobotDataset(
-                        repo_id=args.dataset_name,
-                        root=str(dataset_path),
-                    )
-                    print(f"✓ Loaded existing dataset with {dataset.num_episodes} episodes")
-                else:
-                    print(f"Creating new dataset at {dataset_path}")
-                    obs_shape = policy_data["observations"][0].shape[0]
-                    action_shape = policy_data["actions"][0].shape[0]
+            # Inner loop: Allow switching between policy and teleop within same episode
+            continue_episode = True
+            segment_count = 0
 
-                    features = {
-                        "observation.state": {
-                            "dtype": "float32",
-                            "shape": (obs_shape,),
-                            "names": [f"state_{i}" for i in range(obs_shape)],
-                        },
-                        "action": {
-                            "dtype": "float32",
-                            "shape": (action_shape,),
-                            "names": [f"action_{i}" for i in range(action_shape)],
-                        },
-                        # Source: 0=policy, 1=human (encoded as 1D array for compatibility)
-                        "source": {
-                            "dtype": "int64",
-                            "shape": (1,),
-                            "names": ["source_id"],
-                        },
-                        # Success: 0=False, 1=True (encoded as 1D array for compatibility)
-                        "success": {
-                            "dtype": "int64",
-                            "shape": (1,),
-                            "names": ["success_flag"],
-                        },
-                    }
+            while continue_episode:
+                segment_count += 1
 
-                    # Add camera features
-                    for cam_name in camera_names:
-                        cam_key = f"{cam_name}_image"
-                        if cam_key in policy_data:
-                            img_shape = policy_data[cam_key][0].shape
-                            features[f"observation.images.{cam_name}"] = {
-                                "dtype": "video",
-                                "shape": img_shape,
-                                "names": ["height", "width", "channels"],
-                            }
-
-                    dataset = LeRobotDataset.create(
-                        repo_id=args.dataset_name,
-                        fps=20,
-                        root=str(dataset_path),
-                        robot_type=args.robot.lower(),
-                        features=features,
-                    )
-                    print(f"✓ Dataset created at {dataset_path}")
-
-            # Save policy trajectory
-            if policy_data is not None and len(policy_data["actions"]) > 0:
-                save_episode_to_dataset(
-                    dataset=dataset,
-                    episode_data=policy_data,
-                    task_name=task_name,
-                    camera_names=camera_names,
-                    source="policy",
-                    success=task_success,
-                )
-                saved_policy_count += 1
-
-            # Phase 2: Human correction (if intervention was triggered)
-            if intervention:
-                human_data, correction_success = spacemouse_correction_episode(
+                # Phase 1: Policy rollout
+                policy_data, intervention, task_success = policy_rollout_episode(
                     env=env,
-                    device=spacemouse,
+                    policy=policy,
+                    preprocessor=preprocessor,
+                    postprocessor=postprocessor,
+                    action_stats=action_stats,
                     kbd_listener=kbd_listener,
                     camera_names=camera_names,
+                    device=args.device,
+                    max_steps=args.max_steps,
                     max_fr=args.max_fr,
                     has_renderer=not args.headless,
                     auto_save_on_success=args.auto_save_on_success,
                 )
 
-                # Save human correction if marked as success
-                if correction_success and human_data is not None and len(human_data["actions"]) > 0:
+                # Initialize dataset on first data collection
+                if dataset is None and policy_data is not None:
+                    if dataset_path.exists():
+                        print(f"Loading existing dataset from {dataset_path}")
+                        dataset = LeRobotDataset(
+                            repo_id=args.dataset_name,
+                            root=str(dataset_path),
+                        )
+                        print(f"✓ Loaded existing dataset with {dataset.num_episodes} episodes")
+                    else:
+                        print(f"Creating new dataset at {dataset_path}")
+                        obs_shape = policy_data["observations"][0].shape[0]
+                        action_shape = policy_data["actions"][0].shape[0]
+
+                        features = {
+                            "observation.state": {
+                                "dtype": "float32",
+                                "shape": (obs_shape,),
+                                "names": [f"state_{i}" for i in range(obs_shape)],
+                            },
+                            "action": {
+                                "dtype": "float32",
+                                "shape": (action_shape,),
+                                "names": [f"action_{i}" for i in range(action_shape)],
+                            },
+                            # Source: 0=policy, 1=human (encoded as 1D array for compatibility)
+                            "source": {
+                                "dtype": "int64",
+                                "shape": (1,),
+                                "names": ["source_id"],
+                            },
+                            # Success: 0=False, 1=True (encoded as 1D array for compatibility)
+                            "success": {
+                                "dtype": "int64",
+                                "shape": (1,),
+                                "names": ["success_flag"],
+                            },
+                        }
+
+                        # Add camera features
+                        for cam_name in camera_names:
+                            cam_key = f"{cam_name}_image"
+                            if cam_key in policy_data:
+                                img_shape = policy_data[cam_key][0].shape
+                                features[f"observation.images.{cam_name}"] = {
+                                    "dtype": "video",
+                                    "shape": img_shape,
+                                    "names": ["height", "width", "channels"],
+                                }
+
+                        dataset = LeRobotDataset.create(
+                            repo_id=args.dataset_name,
+                            fps=20,
+                            root=str(dataset_path),
+                            robot_type=args.robot.lower(),
+                            features=features,
+                        )
+                        print(f"✓ Dataset created at {dataset_path}")
+
+                # Save policy trajectory
+                if policy_data is not None and len(policy_data["actions"]) > 0:
                     save_episode_to_dataset(
                         dataset=dataset,
-                        episode_data=human_data,
+                        episode_data=policy_data,
                         task_name=task_name,
                         camera_names=camera_names,
-                        source="human",
-                        success=True,
+                        source="policy",
+                        success=task_success,
                     )
-                    saved_human_count += 1
+                    saved_policy_count += 1
+
+                # Phase 2: Human correction (if intervention was triggered)
+                if intervention:
+                    human_data, action = spacemouse_correction_episode(
+                        env=env,
+                        device=spacemouse,
+                        kbd_listener=kbd_listener,
+                        camera_names=camera_names,
+                        max_fr=args.max_fr,
+                        has_renderer=not args.headless,
+                        auto_save_on_success=args.auto_save_on_success,
+                    )
+
+                    # Save human correction if there's data and action is continue or success
+                    if human_data is not None and len(human_data["actions"]) > 0 and action in ["continue", "success"]:
+                        save_episode_to_dataset(
+                            dataset=dataset,
+                            episode_data=human_data,
+                            task_name=task_name,
+                            camera_names=camera_names,
+                            source="human",
+                            success=True,
+                        )
+                        saved_human_count += 1
+
+                    # Determine if we should continue the episode or end it
+                    if action == "continue":
+                        # Switch back to policy control - continue inner loop
+                        print("\n" + ">" * 60)
+                        print(f"Resuming POLICY control (segment {segment_count + 1})")
+                        print(">" * 60)
+                        continue
+                    else:
+                        # End episode (either "success" or "discard")
+                        continue_episode = False
+                        break
+                else:
+                    # No intervention - policy completed the episode
+                    continue_episode = False
+                    break
 
             # Summary
             print(f"\nEpisode {episode_count} Summary:")
