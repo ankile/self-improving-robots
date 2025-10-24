@@ -11,4 +11,4 @@ python -m sir.training.train_policy \
         --action-chunk-size 20 \
         --n-action-steps 20 \
         --use-wandb \
-        --wandb-project dagger-v2
+        --wandb-project square-dagger-comparison
