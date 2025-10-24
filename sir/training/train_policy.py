@@ -54,6 +54,7 @@ Note:
 """
 
 import argparse
+import dataclasses
 import gc
 import os
 import platform
@@ -181,6 +182,13 @@ def parse_args():
         type=int,
         default=None,
         help="Number of action steps to execute per chunk (default: policy-specific default)",
+    )
+    parser.add_argument(
+        "--diffusion-down-dims",
+        type=str,
+        default=None,
+        help="Diffusion UNet down_dims as comma-separated integers (e.g., '256,512,1024'). "
+        "Controls model size. Default: (512,1024,2048) ~266M params. Try (256,512,1024) for ~60M params.",
     )
 
     # System args
@@ -353,7 +361,7 @@ def evaluate_policy(
 
     Returns:
         tuple: (metrics dict, video_path)
-            - metrics: Dict with success_rate, avg_reward, avg_length
+            - metrics: Dict with success_rate, avg_reward, avg_length, avg_successful_length
             - video_path: Path to saved video (None if save_video=False)
     """
     policy.eval()
@@ -471,10 +479,17 @@ def evaluate_policy(
     # Print summary after all episodes
     print()  # Blank line for readability
 
+    # Compute average successful episode length
+    successful_lengths = [
+        length for success, length in zip(successes, episode_lengths) if success == 1.0
+    ]
+    avg_successful_length = np.mean(successful_lengths) if len(successful_lengths) > 0 else 0.0
+
     metrics = {
         "success_rate": np.mean(successes) * 100,
         "avg_reward": np.mean(total_rewards),
         "avg_length": np.mean(episode_lengths),
+        "avg_successful_length": avg_successful_length,
     }
 
     # Save video if requested
@@ -650,33 +665,6 @@ def train(args):
         config[f"dataset/{safe_name}/total_frames"] = info["total_frames"]
         config[f"dataset/{safe_name}/revision"] = info["revision"]
 
-    # Generate descriptive run name if not provided
-    if args.wandb_run_name is None:
-        # Extract short dataset names (e.g., "square-v1" from "ankile/square-v1")
-        dataset_names = [rid.split("/")[-1] for rid in repo_ids]
-
-        # Check if any dataset includes dagger corrections
-        has_dagger = any("dagger" in name.lower() for name in dataset_names)
-        data_type = "dagger" if has_dagger else "demos"
-
-        # Policy shorthand
-        policy_short = "dp" if args.policy == "diffusion" else args.policy
-
-        # Create concise run name: policy-datatype
-        run_name = f"{policy_short}-{data_type}"
-    else:
-        run_name = args.wandb_run_name
-
-    wandb.init(
-        project=args.wandb_project,
-        entity=args.wandb_entity,
-        name=run_name,
-        config=config,
-        mode="online" if args.use_wandb else "disabled",
-    )
-    print(f"✓ Initialized Weights & Biases (project: {args.wandb_project})")
-    print()
-
     # Load dataset metadata first to get features and stats (from first dataset)
     print("Loading dataset metadata...")
     primary_repo_id = repo_ids[0]
@@ -730,6 +718,9 @@ def train(args):
             policy_kwargs["n_obs_steps"] = args.n_obs_steps
         if args.n_action_steps is not None:
             policy_kwargs["n_action_steps"] = args.n_action_steps
+        if args.diffusion_down_dims is not None:
+            # Parse comma-separated string to tuple of ints
+            policy_kwargs["down_dims"] = tuple(int(x) for x in args.diffusion_down_dims.split(","))
 
     # Create policy config using factory
     policy_config = make_policy_config(args.policy, **policy_kwargs)
@@ -754,16 +745,55 @@ def train(args):
     print(f"  Learning rate: {policy_config.optimizer_lr}")
     print()
 
-    # Update wandb config with actual policy parameters
-    config["policy/learning_rate"] = policy_config.optimizer_lr
-    if hasattr(policy_config, "chunk_size"):
-        config["policy/chunk_size"] = policy_config.chunk_size
-    elif hasattr(policy_config, "horizon"):
-        config["policy/horizon"] = policy_config.horizon
-    if hasattr(policy_config, "n_obs_steps"):
-        config["policy/n_obs_steps"] = policy_config.n_obs_steps
-    if hasattr(policy_config, "n_action_steps"):
-        config["policy/n_action_steps"] = policy_config.n_action_steps
+    # Update wandb config with all policy parameters
+    # Convert policy config to dict and log all non-complex attributes
+    policy_config_dict = dataclasses.asdict(policy_config)
+
+    # Filter out complex objects that aren't easily serializable or are logged elsewhere
+    skip_keys = {"input_features", "output_features"}
+
+    for key, value in policy_config_dict.items():
+        if key not in skip_keys:
+            # Handle nested dicts and basic types
+            if isinstance(value, (int, float, str, bool, type(None))):
+                config[f"policy/{key}"] = value
+            elif isinstance(value, (list, tuple)) and all(
+                isinstance(v, (int, float, str, bool, type(None))) for v in value
+            ):
+                config[f"policy/{key}"] = value
+            elif isinstance(value, dict) and all(
+                isinstance(k, str) and isinstance(v, (int, float, str, bool, type(None)))
+                for k, v in value.items()
+            ):
+                config[f"policy/{key}"] = value
+
+    # Generate descriptive run name if not provided
+    if args.wandb_run_name is None:
+        # Extract short dataset names (e.g., "square-v1" from "ankile/square-v1")
+        dataset_names = [rid.split("/")[-1] for rid in repo_ids]
+
+        # Check if any dataset includes dagger corrections
+        has_dagger = any("dagger" in name.lower() for name in dataset_names)
+        data_type = "dagger" if has_dagger else "demos"
+
+        # Policy shorthand
+        policy_short = "dp" if args.policy == "diffusion" else args.policy
+
+        # Create concise run name: policy-datatype
+        run_name = f"{policy_short}-{data_type}"
+    else:
+        run_name = args.wandb_run_name
+
+    # Initialize Weights & Biases with fully formed config
+    wandb.init(
+        project=args.wandb_project,
+        entity=args.wandb_entity,
+        name=run_name,
+        config=config,
+        mode="online" if args.use_wandb else "disabled",
+    )
+    print(f"✓ Initialized Weights & Biases (project: {args.wandb_project})")
+    print()
 
     # Create pre/post processors for normalization
     preprocessor, postprocessor = make_pre_post_processors(
@@ -970,6 +1000,7 @@ def train(args):
                 print(f"  Success Rate: {metrics['success_rate']:.1f}%")
                 print(f"  Avg Reward: {metrics['avg_reward']:.3f}")
                 print(f"  Avg Length: {metrics['avg_length']:.1f}")
+                print(f"  Avg Successful Length: {metrics['avg_successful_length']:.1f}")
                 print()
 
                 # Update best success rate
@@ -984,6 +1015,7 @@ def train(args):
                         "eval/success_rate": metrics["success_rate"],
                         "eval/avg_reward": metrics["avg_reward"],
                         "eval/avg_length": metrics["avg_length"],
+                        "eval/avg_successful_length": metrics["avg_successful_length"],
                         "eval/best_success_rate": best_success_rate,
                     }
                     # Log video if available
