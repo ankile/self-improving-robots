@@ -190,6 +190,14 @@ def parse_args():
         help="Diffusion UNet down_dims as comma-separated integers (e.g., '256,512,1024'). "
         "Controls model size. Default: (512,1024,2048) ~266M params. Try (256,512,1024) for ~60M params.",
     )
+    parser.add_argument(
+        "--crop-shape",
+        type=str,
+        default=None,
+        help="Image crop shape as 'H,W' (e.g., '128,128'). "
+        "Only used by Diffusion policy. Default: (84,84) which may be too small for ManiSkill's 128x128 images. "
+        "Use '128,128' to disable cropping for ManiSkill environments.",
+    )
 
     # System args
     parser.add_argument(
@@ -728,6 +736,9 @@ def train(args):
         if args.diffusion_down_dims is not None:
             # Parse comma-separated string to tuple of ints
             policy_kwargs["down_dims"] = tuple(int(x) for x in args.diffusion_down_dims.split(","))
+        if args.crop_shape is not None:
+            # Parse comma-separated string to tuple of ints
+            policy_kwargs["crop_shape"] = tuple(int(x) for x in args.crop_shape.split(","))
 
     # Create policy config using factory
     policy_config = make_policy_config(args.policy, **policy_kwargs)

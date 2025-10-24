@@ -11,5 +11,6 @@ python -m sir.training.train_policy \
         --action-chunk-size 24 \
         --n-action-steps 16 \
         --diffusion-down-dims 256,512,1024 \
+        --crop-shape 256,256 \
         --use-wandb \
         --wandb-project square-dagger-comparison
